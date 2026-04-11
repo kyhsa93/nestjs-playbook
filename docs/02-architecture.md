@@ -2555,6 +2555,7 @@ src/
 import { Module } from '@nestjs/common'
 import { ConfigModule } from '@nestjs/config'
 
+import { validateConfig } from '@/config/config-validator'
 import { databaseConfig } from '@/config/database.config'
 import { jwtConfig } from '@/config/jwt.config'
 import { s3Config } from '@/config/s3.config'
@@ -2802,11 +2803,11 @@ awslocal s3 mb s3://app-files
 
 ```env
 # Database
-DB_HOST=localhost
-DB_PORT=5432
-DB_USERNAME=dev
-DB_PASSWORD=dev
-DB_DATABASE=app
+DATABASE_HOST=localhost
+DATABASE_PORT=5432
+DATABASE_USER=dev
+DATABASE_PASSWORD=dev
+DATABASE_NAME=app
 
 # AWS (LocalStack)
 AWS_ENDPOINT=http://localhost:4566

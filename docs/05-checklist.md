@@ -459,7 +459,7 @@ AI Agent는 작업 완료 후 다음 순서로 자기 검토를 수행한다:
 > 항목의 의도가 불명확하다면 해당 문서를 참조한다:
 > - STEP 1 파일 구조 및 네이밍 → [03-conventions.md](03-conventions.md) 섹션 1-3
 > - STEP 2 Domain 레이어 → [02-architecture.md](02-architecture.md) 섹션 2, 9, 12
-> - STEP 3 레이어 아키텍처 / @nestjs/cqrs → [02-architecture.md](02-architecture.md) 섹션 2, 12 / [03-conventions.md](03-conventions.md) 섹션 6
+> - STEP 3 레이어 아키텍처 / @nestjs/cqrs → [02-architecture.md](02-architecture.md) 섹션 2, 6, 13 / [03-conventions.md](03-conventions.md) 섹션 6
 > - STEP 4 Repository 패턴 → [02-architecture.md](02-architecture.md) 섹션 3
 > - STEP 5 NestJS DI → [02-architecture.md](02-architecture.md) 섹션 3, 4
 > - STEP 6 TypeScript 타이핑 → [03-conventions.md](03-conventions.md) 섹션 4
@@ -468,7 +468,7 @@ AI Agent는 작업 완료 후 다음 순서로 자기 검토를 수행한다:
 > - STEP 9 Swagger → [03-conventions.md](03-conventions.md) 섹션 8
 > - STEP 10 import → [03-conventions.md](03-conventions.md) 섹션 7
 > - STEP 11 모듈 데코레이터 → [02-architecture.md](02-architecture.md) 섹션 4
-> - STEP 12 DB/인프라 → [02-architecture.md](02-architecture.md) 섹션 3, 7
+> - STEP 12 DB/인프라 → [02-architecture.md](02-architecture.md) 섹션 3, 6, 7
 > - STEP 13 테스트 패턴 → [03-conventions.md](03-conventions.md) 섹션 13
 > - STEP 14 전체 일관성 → 전체 문서 참조
 > - STEP 15 설계 산출물 형태 → [01-development-process.md](01-development-process.md) Agent 1~5

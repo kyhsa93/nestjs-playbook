@@ -695,7 +695,7 @@ describe('OrderService', () => {
   it('주문이 존재하지 않으면 에러를 throw한다', async () => {
     orderRepository.findOrders.mockResolvedValue({ orders: [], count: 0 })
 
-    await expect(service.getOrder({ orderId: 999 }))
+    await expect(service.getOrder({ orderId: 'non-existent-id' }))
       .rejects.toThrow(OrderErrorMessage['주문을 찾을 수 없습니다.'])
   })
 })
