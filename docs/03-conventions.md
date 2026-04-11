@@ -311,7 +311,7 @@ import { Injectable } from '@nestjs/common'
 import * as dayjs from 'dayjs'
 
 // 2. 내부 @/ alias imports (알파벳 순 — 경로 기준)
-import { TransactionManager } from '@/infrastructure/transaction-manager'
+import { TransactionManager } from '@/database/transaction-manager'
 import { formatDate } from '@/libs/datetime'
 import { GetOrdersQuery } from '@/order/application/query/get-orders-query'
 import { OrderRepository } from '@/order/domain/order-repository'

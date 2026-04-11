@@ -4,12 +4,17 @@
 
 ```
 src/
-  infrastructure/
-    typeorm/
-      base.entity.ts                   # 공통 컬럼 (createdAt, updatedAt, deletedAt)
-      data-source.ts                   # TypeORM DataSource 설정
+  database/                            # 데이터베이스 모듈
+    database-module.ts
+    base.entity.ts                     # 공통 컬럼 (createdAt, updatedAt, deletedAt)
+    data-source.ts                     # TypeORM DataSource 설정
     transaction-manager.ts             # 트랜잭션 매니저 (AsyncLocalStorage 기반)
-    domain-event-publisher.ts          # 도메인 이벤트 발행기
+  outbox/                              # Outbox 모듈
+    outbox-module.ts
+    outbox.entity.ts                   # Outbox 테이블 Entity
+    outbox-writer.ts                   # 트랜잭션 안에서 이벤트 저장
+    outbox-processor.ts                # 폴링으로 미발행 이벤트 발행
+    domain-event-publisher.ts          # 이벤트를 핸들러에 전달
   config/
     <concern>.config.ts              # 관심사별 설정 팩토리 (database, jwt 등)
     config-validator.ts              # 환경 변수 검증
@@ -150,8 +155,8 @@ Application Service는 **Command Service**와 **Query Service**로 분리한다.
 // application/command/order-command-service.ts
 import { Injectable } from '@nestjs/common'
 
-import { OutboxWriter } from '@/infrastructure/outbox-writer'
-import { TransactionManager } from '@/infrastructure/transaction-manager'
+import { OutboxWriter } from '@/outbox/outbox-writer'
+import { TransactionManager } from '@/database/transaction-manager'
 import { CancelOrderCommand } from '@/order/application/command/cancel-order-command'
 import { OrderRepository } from '@/order/domain/order-repository'
 import { PaymentRepository } from '@/order/domain/payment-repository'
@@ -267,7 +272,7 @@ import { Injectable } from '@nestjs/common'
 import { InjectRepository } from '@nestjs/typeorm'
 import { Repository } from 'typeorm'
 
-import { TransactionManager } from '@/infrastructure/transaction-manager'
+import { TransactionManager } from '@/database/transaction-manager'
 import { Order } from '@/order/domain/order'
 import { OrderItem } from '@/order/domain/order-item'
 import { OrderRepository } from '@/order/domain/order-repository'
@@ -426,7 +431,6 @@ Module에서 abstract class를 토큰으로 사용하여 구현체를 주입한�
   controllers: [OrderController],
   providers: [
     OrderService,
-    TransactionManager,
     { provide: OrderRepository, useClass: OrderRepositoryImpl },
     { provide: PaymentRepository, useClass: PaymentRepositoryImpl }
   ]
@@ -647,7 +651,6 @@ export class OrderService {
   controllers: [UserController],
   providers: [
     UserService,
-    TransactionManager,
     { provide: UserRepository, useClass: UserRepositoryImpl }
   ],
   exports: [UserService]
@@ -660,7 +663,6 @@ export class UserModule {}
   controllers: [OrderController],
   providers: [
     OrderService,
-    TransactionManager,
     { provide: OrderRepository, useClass: OrderRepositoryImpl },
     { provide: UserAdapter, useClass: UserAdapterImpl }
   ]
@@ -845,7 +847,7 @@ export class StorageServiceImpl extends StorageService {
 // infrastructure/entity/order-attachment.entity.ts
 import { Entity, PrimaryColumn, Column, ManyToOne, JoinColumn } from 'typeorm'
 
-import { BaseEntity } from '@/infrastructure/typeorm/base.entity'
+import { BaseEntity } from '@/database/base.entity'
 import { OrderEntity } from '@/order/infrastructure/entity/order.entity'
 
 @Entity('order_attachment')
@@ -1103,10 +1105,10 @@ export class Order {
 ### Outbox Entity
 
 ```typescript
-// infrastructure/typeorm/outbox.entity.ts
+// outbox/outbox.entity.ts
 import { Entity, PrimaryColumn, Column } from 'typeorm'
 
-import { BaseEntity } from '@/infrastructure/typeorm/base.entity'
+import { BaseEntity } from '@/database/base.entity'
 
 @Entity('outbox')
 export class OutboxEntity extends BaseEntity {
@@ -1129,12 +1131,12 @@ export class OutboxEntity extends BaseEntity {
 트랜잭션 안에서 이벤트를 outbox 테이블에 저장한다.
 
 ```typescript
-// infrastructure/outbox-writer.ts
+// outbox/outbox-writer.ts
 import { Injectable } from '@nestjs/common'
 
 import { generateId } from '@/common/generate-id'
-import { TransactionManager } from '@/infrastructure/transaction-manager'
-import { OutboxEntity } from '@/infrastructure/typeorm/outbox.entity'
+import { TransactionManager } from '@/database/transaction-manager'
+import { OutboxEntity } from '@/outbox/outbox.entity'
 
 @Injectable()
 export class OutboxWriter {
@@ -1160,13 +1162,13 @@ export class OutboxWriter {
 미발행 이벤트를 폴링하여 EventHandler에 전달한다.
 
 ```typescript
-// infrastructure/outbox-processor.ts
+// outbox/outbox-processor.ts
 import { Injectable, Logger } from '@nestjs/common'
 import { Cron } from '@nestjs/schedule'
 import { DataSource } from 'typeorm'
 
-import { DomainEventPublisher } from '@/infrastructure/domain-event-publisher'
-import { OutboxEntity } from '@/infrastructure/typeorm/outbox.entity'
+import { DomainEventPublisher } from '@/outbox/domain-event-publisher'
+import { OutboxEntity } from '@/outbox/outbox.entity'
 
 @Injectable()
 export class OutboxProcessor {
@@ -1205,7 +1207,7 @@ outbox에서 읽은 이벤트를 핸들러에 전달한다. 프로젝트의 이�
 #### 방식 A: @nestjs/event-emitter (Service 패턴)
 
 ```typescript
-// infrastructure/domain-event-publisher.ts
+// outbox/domain-event-publisher.ts
 import { Injectable } from '@nestjs/common'
 import { EventEmitter2 } from '@nestjs/event-emitter'
 
@@ -1236,7 +1238,7 @@ export class OrderCancelledHandler {
 #### 방식 B: @nestjs/cqrs EventBus (CQRS 패턴)
 
 ```typescript
-// infrastructure/domain-event-publisher.ts
+// outbox/domain-event-publisher.ts
 import { Injectable } from '@nestjs/common'
 import { EventBus } from '@nestjs/cqrs'
 
@@ -1262,7 +1264,7 @@ export class DomainEventPublisher {
 
 ```typescript
 // domain/order-cancelled.ts — 이벤트 클래스 등록
-import { RegisterEvent } from '@/infrastructure/domain-event-publisher'
+import { RegisterEvent } from '@/outbox/domain-event-publisher'
 
 export class OrderCancelled {
   public readonly orderId: string
@@ -1316,9 +1318,9 @@ public async cancelOrder(command: CancelOrderCommand): Promise<void> {
 
 ```
 src/
-  infrastructure/
-    typeorm/
-      outbox.entity.ts              ← Outbox 테이블 Entity
+  outbox/
+    outbox-module.ts                 ← OutboxModule
+    outbox.entity.ts                 ← Outbox 테이블 Entity
     outbox-writer.ts                 ← 트랜잭션 안에서 이벤트 저장
     outbox-processor.ts              ← 폴링으로 미발행 이벤트 발행
     domain-event-publisher.ts        ← 이벤트를 핸들러에 전달
@@ -1333,26 +1335,65 @@ src/
 ### Module 등록
 
 ```typescript
+// database/database-module.ts
+import { Global, Module } from '@nestjs/common'
+import { TypeOrmModule } from '@nestjs/typeorm'
+
+import { TransactionManager } from '@/database/transaction-manager'
+
+@Global()
+@Module({
+  imports: [TypeOrmModule.forRoot({ ... })],
+  providers: [TransactionManager],
+  exports: [TransactionManager]
+})
+export class DatabaseModule {}
+```
+
+```typescript
+// outbox/outbox-module.ts
+import { Global, Module } from '@nestjs/common'
+import { TypeOrmModule } from '@nestjs/typeorm'
+
+import { DomainEventPublisher } from '@/outbox/domain-event-publisher'
+import { OutboxEntity } from '@/outbox/outbox.entity'
+import { OutboxProcessor } from '@/outbox/outbox-processor'
+import { OutboxWriter } from '@/outbox/outbox-writer'
+
+@Global()
+@Module({
+  imports: [TypeOrmModule.forFeature([OutboxEntity])],
+  providers: [OutboxWriter, OutboxProcessor, DomainEventPublisher],
+  exports: [OutboxWriter]
+})
+export class OutboxModule {}
+```
+
+```typescript
 // app-module.ts
 import { ScheduleModule } from '@nestjs/schedule'
 import { EventEmitterModule } from '@nestjs/event-emitter'  // 방식 A
 // 또는 import { CqrsModule } from '@nestjs/cqrs'           // 방식 B
+
+import { DatabaseModule } from '@/database/database-module'
+import { OutboxModule } from '@/outbox/outbox-module'
 
 @Module({
   imports: [
     ScheduleModule.forRoot(),
     EventEmitterModule.forRoot(),  // 방식 A
     // CqrsModule,                 // 방식 B
-    TypeOrmModule.forFeature([OutboxEntity]),
-    // ...
-  ],
-  providers: [OutboxProcessor, DomainEventPublisher]
+    DatabaseModule,
+    OutboxModule,
+    // ...도메인 모듈
+  ]
 })
 export class AppModule {}
 
-// order-module.ts
+// order-module.ts — DatabaseModule, OutboxModule이 @Global()이므로 별도 import 불필요
 @Module({
-  providers: [OrderCommandService, OutboxWriter, OrderCancelledHandler, ...]
+  imports: [TypeOrmModule.forFeature([OrderEntity, OrderItemEntity])],
+  providers: [OrderCommandService, OrderCancelledHandler, ...]
 })
 export class OrderModule {}
 ```
@@ -1408,7 +1449,7 @@ await this.orderRepository.saveOrder(order)
 #### TransactionManager (infrastructure 레이어)
 
 ```typescript
-// infrastructure/transaction-manager.ts
+// database/transaction-manager.ts
 import { Injectable } from '@nestjs/common'
 import { DataSource, EntityManager } from 'typeorm'
 import { AsyncLocalStorage } from 'async_hooks'
@@ -1546,7 +1587,7 @@ if (query.name) qb.andWhere('order.name LIKE :name', { name: `%${query.name}%` }
 모든 TypeORM Entity는 `createdAt`, `updatedAt`, `deletedAt` 컬럼을 포함한다. 공통 컬럼은 `BaseEntity`를 상속하여 적용한다.
 
 ```typescript
-// infrastructure/typeorm/base.entity.ts
+// database/base.entity.ts
 import { CreateDateColumn, UpdateDateColumn, DeleteDateColumn } from 'typeorm'
 
 export abstract class BaseEntity {
@@ -1567,7 +1608,7 @@ export abstract class BaseEntity {
 // infrastructure/entity/order.entity.ts
 import { Entity, PrimaryColumn, Column, OneToMany } from 'typeorm'
 
-import { BaseEntity } from '@/infrastructure/typeorm/base.entity'
+import { BaseEntity } from '@/database/base.entity'
 import { OrderItemEntity } from '@/order/infrastructure/entity/order-item.entity'
 
 @Entity('order')
@@ -1879,12 +1920,20 @@ public async applyCoupon(command: ApplyCouponCommand): Promise<void> {
 src/
   common/                          # 프로젝트 공통 유틸
     generate-error-response.ts
+    generate-id.ts
     http-exception.filter.ts
     logging.interceptor.ts
-  infrastructure/                  # 공유 인프라
-    typeorm/
-      data-source.ts               # TypeORM DataSource 설정
-    transaction-manager.ts         # 트랜잭션 매니저
+  database/                        # 데이터베이스 모듈 (@Global)
+    database-module.ts
+    base.entity.ts
+    data-source.ts
+    transaction-manager.ts
+  outbox/                          # Outbox 모듈 (@Global)
+    outbox-module.ts
+    outbox.entity.ts
+    outbox-writer.ts
+    outbox-processor.ts
+    domain-event-publisher.ts
   auth/                            # 인증 모듈 (공유)
     auth-module.ts
     auth-service.ts                # 토큰 발급/검증 (JWT)
@@ -1898,7 +1947,8 @@ src/
 ```
 
 - `src/common/` — 에러 처리, 필터, 인터셉터 등 프레임워크 공통 코드
-- `src/infrastructure/` — TypeORM DataSource, TransactionManager, 메시지 큐 클라이언트 등 공유 인프라
+- `src/database/` — DatabaseModule: TypeORM DataSource, TransactionManager (`@Global`)
+- `src/outbox/` — OutboxModule: OutboxWriter, OutboxProcessor, DomainEventPublisher (`@Global`)
 - `src/auth/` — 인증/인가 공유 모듈
 
 ---
@@ -2021,7 +2071,7 @@ export class Order {
 
 ```typescript
 // infrastructure/entity/order.entity.ts
-import { BaseEntity } from '@/infrastructure/typeorm/base.entity'
+import { BaseEntity } from '@/database/base.entity'
 
 @Entity('order')
 export class OrderEntity extends BaseEntity {
@@ -2136,8 +2186,8 @@ export class CancelOrderCommand {
 // application/command/cancel-order-command-handler.ts — CommandHandler
 import { CommandHandler, ICommandHandler } from '@nestjs/cqrs'
 
-import { OutboxWriter } from '@/infrastructure/outbox-writer'
-import { TransactionManager } from '@/infrastructure/transaction-manager'
+import { OutboxWriter } from '@/outbox/outbox-writer'
+import { TransactionManager } from '@/database/transaction-manager'
 import { CancelOrderCommand } from '@/order/application/command/cancel-order-command'
 import { OrderRepository } from '@/order/domain/order-repository'
 import { PaymentRepository } from '@/order/domain/payment-repository'
@@ -2311,7 +2361,7 @@ export class OrderController {
 import { Module } from '@nestjs/common'
 import { CqrsModule } from '@nestjs/cqrs'
 
-import { TransactionManager } from '@/infrastructure/transaction-manager'
+import { TransactionManager } from '@/database/transaction-manager'
 import { CancelOrderCommandHandler } from '@/order/application/command/cancel-order-command-handler'
 import { CreateOrderCommandHandler } from '@/order/application/command/create-order-command-handler'
 import { OrderCancelledHandler } from '@/order/application/event/order-cancelled-handler'
@@ -2335,8 +2385,7 @@ import { OrderController } from '@/order/interface/order-controller'
     GetOrdersQueryHandler,
     // Event Handlers
     OrderCancelledHandler,
-    // Infrastructure
-    TransactionManager,
+    // Repositories
     { provide: OrderRepository, useClass: OrderRepositoryImpl },
     { provide: PaymentRepository, useClass: PaymentRepositoryImpl }
   ]

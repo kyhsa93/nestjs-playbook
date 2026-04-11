@@ -206,8 +206,8 @@ export abstract class PaymentRepository {
 // application/order-service.ts
 import { Injectable } from '@nestjs/common'
 
-import { OutboxWriter } from '@/infrastructure/outbox-writer'
-import { TransactionManager } from '@/infrastructure/transaction-manager'
+import { TransactionManager } from '@/database/transaction-manager'
+import { OutboxWriter } from '@/outbox/outbox-writer'
 import { CancelOrderCommand } from '@/order/application/command/cancel-order-command'
 import { CreateOrderCommand } from '@/order/application/command/create-order-command'
 import { DeleteOrderCommand } from '@/order/application/command/delete-order-command'
@@ -413,7 +413,7 @@ import { Injectable } from '@nestjs/common'
 import { InjectRepository } from '@nestjs/typeorm'
 import { Repository } from 'typeorm'
 
-import { TransactionManager } from '@/infrastructure/transaction-manager'
+import { TransactionManager } from '@/database/transaction-manager'
 import { Order } from '@/order/domain/order'
 import { OrderItem } from '@/order/domain/order-item'
 import { OrderRepository } from '@/order/domain/order-repository'
@@ -688,8 +688,7 @@ import { Module } from '@nestjs/common'
 import { TypeOrmModule } from '@nestjs/typeorm'
 
 import { AuthService } from '@/auth/auth-service'
-import { OutboxWriter } from '@/infrastructure/outbox-writer'
-import { TransactionManager } from '@/infrastructure/transaction-manager'
+import { TransactionManager } from '@/database/transaction-manager'
 import { OrderService } from '@/order/application/order-service'
 import { CryptoService } from '@/order/application/service/crypto-service'
 import { OrderRepository } from '@/order/domain/order-repository'
@@ -706,8 +705,6 @@ import { OrderController } from '@/order/interface/order-controller'
   controllers: [OrderController],
   providers: [
     OrderService,
-    TransactionManager,
-    OutboxWriter,
     { provide: OrderRepository, useClass: OrderRepositoryImpl },
     { provide: PaymentRepository, useClass: PaymentRepositoryImpl },
     { provide: CryptoService, useClass: CryptoServiceImpl },
