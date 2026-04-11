@@ -127,6 +127,13 @@
     → 하위 Entity에 별도 Repository를 만들지 않는다
 [ ] Application 레이어(Query/Result/Command)에 @ApiProperty, class-validator 등 데코레이터를 사용하고 있는가?
     → 허용됨. 단, Domain 레이어에서는 사용 금지
+[ ] 도메인 메서드 실행 후 Aggregate에 수집된 이벤트가 있다면 outboxWriter.saveAll()로 outbox에 저장하는가?
+    → Aggregate 저장과 outbox 저장이 같은 트랜잭션 안에 있어야 한다 (Transactional Outbox)
+[ ] outbox 저장 후 aggregate.clearEvents()를 호출하여 이벤트를 초기화하는가?
+[ ] 이벤트는 Aggregate 내부 도메인 메서드에서만 수집하는가?
+    → Command Service가 직접 이벤트를 생성하지 않는다
+[ ] EventHandler가 application/event/ 디렉토리에 배치되어 있는가?
+[ ] OutboxWriter, OutboxProcessor, DomainEventPublisher, EventHandler가 Module providers에 등록되어 있는가?
 ```
 
 ---

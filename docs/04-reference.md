@@ -206,6 +206,7 @@ export abstract class PaymentRepository {
 // application/order-service.ts
 import { Injectable } from '@nestjs/common'
 
+import { OutboxWriter } from '@/infrastructure/outbox-writer'
 import { TransactionManager } from '@/infrastructure/transaction-manager'
 import { CancelOrderCommand } from '@/order/application/command/cancel-order-command'
 import { CreateOrderCommand } from '@/order/application/command/create-order-command'
@@ -224,7 +225,8 @@ export class OrderService {
   constructor(
     private readonly orderRepository: OrderRepository,
     private readonly paymentRepository: PaymentRepository,
-    private readonly transactionManager: TransactionManager
+    private readonly transactionManager: TransactionManager,
+    private readonly outboxWriter: OutboxWriter
   ) {}
 
   public async getOrders(query: GetOrdersQuery): Promise<GetOrdersResult> {
@@ -276,11 +278,13 @@ export class OrderService {
     // 비즈니스 규칙은 Aggregate 내부에서 검증
     order.cancel(command.reason)
 
-    // 여러 Repository 호출을 하나의 트랜잭션으로 묶는다
+    // Aggregate 저장 + 이벤트 outbox 저장을 같은 트랜잭션으로
     await this.transactionManager.run(async () => {
       await this.paymentRepository.deletePaymentMethods(order.orderId)
       await this.orderRepository.saveOrder(order)
+      await this.outboxWriter.saveAll(order.domainEvents)
     })
+    order.clearEvents()
   }
 
   public async deleteOrder(command: DeleteOrderCommand): Promise<void> {
@@ -684,6 +688,7 @@ import { Module } from '@nestjs/common'
 import { TypeOrmModule } from '@nestjs/typeorm'
 
 import { AuthService } from '@/auth/auth-service'
+import { OutboxWriter } from '@/infrastructure/outbox-writer'
 import { TransactionManager } from '@/infrastructure/transaction-manager'
 import { OrderService } from '@/order/application/order-service'
 import { CryptoService } from '@/order/application/service/crypto-service'
@@ -702,6 +707,7 @@ import { OrderController } from '@/order/interface/order-controller'
   providers: [
     OrderService,
     TransactionManager,
+    OutboxWriter,
     { provide: OrderRepository, useClass: OrderRepositoryImpl },
     { provide: PaymentRepository, useClass: PaymentRepositoryImpl },
     { provide: CryptoService, useClass: CryptoServiceImpl },

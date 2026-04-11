@@ -9,6 +9,7 @@ src/
       base.entity.ts                   # 공통 컬럼 (createdAt, updatedAt, deletedAt)
       data-source.ts                   # TypeORM DataSource 설정
     transaction-manager.ts             # 트랜잭션 매니저 (AsyncLocalStorage 기반)
+    domain-event-publisher.ts          # 도메인 이벤트 발행기
   config/
     <concern>.config.ts              # 관심사별 설정 팩토리 (database, jwt 등)
     config-validator.ts              # 환경 변수 검증
@@ -149,8 +150,9 @@ Application Service는 **Command Service**와 **Query Service**로 분리한다.
 // application/command/order-command-service.ts
 import { Injectable } from '@nestjs/common'
 
-import { CancelOrderCommand } from '@/order/application/command/cancel-order-command'
+import { OutboxWriter } from '@/infrastructure/outbox-writer'
 import { TransactionManager } from '@/infrastructure/transaction-manager'
+import { CancelOrderCommand } from '@/order/application/command/cancel-order-command'
 import { OrderRepository } from '@/order/domain/order-repository'
 import { PaymentRepository } from '@/order/domain/payment-repository'
 import { OrderErrorMessage as ErrorMessage } from '@/order/order-error-message'
@@ -160,21 +162,27 @@ export class OrderCommandService {
   constructor(
     private readonly orderRepository: OrderRepository,
     private readonly paymentRepository: PaymentRepository,
-    private readonly transactionManager: TransactionManager
+    private readonly transactionManager: TransactionManager,
+    private readonly outboxWriter: OutboxWriter
   ) {}
 
   public async cancelOrder(command: CancelOrderCommand): Promise<void> {
+    // 1. Aggregate 조회
     const order = await this.orderRepository
       .findOrders({ orderId: command.orderId, take: 1, page: 0 })
       .then((r) => r.orders.pop())
     if (!order) throw new Error(ErrorMessage['주문을 찾을 수 없습니다.'])
 
+    // 2. 도메인 메서드 호출 (Aggregate 내부에서 이벤트 수집)
     order.cancel(command.reason)
 
+    // 3. Aggregate 저장 + 이벤트 outbox 저장을 같은 트랜잭션으로
     await this.transactionManager.run(async () => {
       await this.paymentRepository.deletePaymentMethods(order.orderId)
       await this.orderRepository.saveOrder(order)
+      await this.outboxWriter.saveAll(order.domainEvents)
     })
+    order.clearEvents()
   }
 }
 ```
@@ -1043,7 +1051,323 @@ app.useGlobalFilters(new HttpExceptionFilter())
 
 ---
 
-## 6. 데이터베이스 쿼리 패턴 (TypeORM 기준)
+## 6. 도메인 이벤트 발행 패턴 — Transactional Outbox
+
+### 문제
+
+도메인 메서드 실행 후 이벤트를 발행할 때, Aggregate 저장과 이벤트 발행이 원자적이지 않으면 다음 문제가 발생한다:
+
+- 트랜잭션 커밋 후 서버가 죽으면 → 이벤트 유실
+- 이벤트 발행 후 트랜잭션이 롤백되면 → 잘못된 이벤트 발행
+
+### 해결 — Transactional Outbox 패턴
+
+Aggregate 저장과 이벤트 저장을 **같은 트랜잭션**으로 묶는다. 별도 프로세스가 outbox 테이블에서 이벤트를 읽어 발행한다.
+
+```
+[Command 실행 — 하나의 트랜잭션]
+1. Command Service: Aggregate 조회
+2. Command Service: Aggregate 도메인 메서드 호출 → Aggregate 내부에 이벤트 수집
+3. Command Service: transactionManager.run() 안에서:
+   - Repository로 Aggregate 저장
+   - Outbox 테이블에 수집된 이벤트 저장
+4. 트랜잭션 커밋 → Aggregate와 이벤트가 함께 확정되거나 함께 롤백됨
+
+[이벤트 발행 — 별도 프로세스]
+5. OutboxProcessor: outbox 테이블에서 미발행 이벤트를 폴링
+6. OutboxProcessor: 이벤트를 EventHandler에 전달
+7. OutboxProcessor: 발행 완료된 이벤트를 processed 처리
+```
+
+### Aggregate에서 이벤트 수집
+
+Aggregate는 도메인 메서드 내에서 `_events` 배열에 이벤트를 추가한다.
+
+```typescript
+// domain/order.ts
+export class Order {
+  private readonly _events: OrderDomainEvent[] = []
+
+  get domainEvents(): OrderDomainEvent[] { return [...this._events] }
+
+  public cancel(reason: string): void {
+    if (this._status === 'cancelled') throw new Error(...)
+    this._status = 'cancelled'
+    this._events.push(new OrderCancelled({ orderId: this.orderId, reason, cancelledAt: new Date() }))
+  }
+
+  public clearEvents(): void { this._events.length = 0 }
+}
+```
+
+### Outbox Entity
+
+```typescript
+// infrastructure/typeorm/outbox.entity.ts
+import { Entity, PrimaryColumn, Column } from 'typeorm'
+
+import { BaseEntity } from '@/infrastructure/typeorm/base.entity'
+
+@Entity('outbox')
+export class OutboxEntity extends BaseEntity {
+  @PrimaryColumn({ type: 'char', length: 32 })
+  eventId: string
+
+  @Column({ type: 'varchar', length: 100 })
+  eventType: string
+
+  @Column({ type: 'text' })
+  payload: string
+
+  @Column({ type: 'boolean', default: false })
+  processed: boolean
+}
+```
+
+### OutboxWriter (infrastructure 레이어)
+
+트랜잭션 안에서 이벤트를 outbox 테이블에 저장한다.
+
+```typescript
+// infrastructure/outbox-writer.ts
+import { Injectable } from '@nestjs/common'
+
+import { generateId } from '@/common/generate-id'
+import { TransactionManager } from '@/infrastructure/transaction-manager'
+import { OutboxEntity } from '@/infrastructure/typeorm/outbox.entity'
+
+@Injectable()
+export class OutboxWriter {
+  constructor(private readonly transactionManager: TransactionManager) {}
+
+  public async saveAll(events: object[]): Promise<void> {
+    const manager = this.transactionManager.getManager()
+    await manager.save(
+      OutboxEntity,
+      events.map((event) => ({
+        eventId: generateId(),
+        eventType: event.constructor.name,
+        payload: JSON.stringify(event),
+        processed: false
+      }))
+    )
+  }
+}
+```
+
+### OutboxProcessor (infrastructure 레이어)
+
+미발행 이벤트를 폴링하여 EventHandler에 전달한다.
+
+```typescript
+// infrastructure/outbox-processor.ts
+import { Injectable, Logger } from '@nestjs/common'
+import { Cron } from '@nestjs/schedule'
+import { DataSource } from 'typeorm'
+
+import { DomainEventPublisher } from '@/infrastructure/domain-event-publisher'
+import { OutboxEntity } from '@/infrastructure/typeorm/outbox.entity'
+
+@Injectable()
+export class OutboxProcessor {
+  private readonly logger = new Logger(OutboxProcessor.name)
+
+  constructor(
+    private readonly dataSource: DataSource,
+    private readonly eventPublisher: DomainEventPublisher
+  ) {}
+
+  @Cron('*/5 * * * * *')
+  public async process(): Promise<void> {
+    const repo = this.dataSource.getRepository(OutboxEntity)
+    const events = await repo.find({
+      where: { processed: false },
+      order: { createdAt: 'ASC' },
+      take: 100
+    })
+
+    for (const event of events) {
+      try {
+        await this.eventPublisher.publish(event.eventType, JSON.parse(event.payload))
+        await repo.update({ eventId: event.eventId }, { processed: true })
+      } catch (error) {
+        this.logger.error({ message: '이벤트 발행 실패', event_id: event.eventId, error })
+      }
+    }
+  }
+}
+```
+
+### DomainEventPublisher (infrastructure 레이어)
+
+outbox에서 읽은 이벤트를 핸들러에 전달한다. 프로젝트의 이벤트 시스템에 따라 구현이 달라진다.
+
+#### 방식 A: @nestjs/event-emitter (Service 패턴)
+
+```typescript
+// infrastructure/domain-event-publisher.ts
+import { Injectable } from '@nestjs/common'
+import { EventEmitter2 } from '@nestjs/event-emitter'
+
+@Injectable()
+export class DomainEventPublisher {
+  constructor(private readonly eventEmitter: EventEmitter2) {}
+
+  public async publish(eventType: string, payload: object): Promise<void> {
+    await this.eventEmitter.emitAsync(eventType, payload)
+  }
+}
+```
+
+```typescript
+// application/event/order-cancelled-handler.ts
+import { Injectable } from '@nestjs/common'
+import { OnEvent } from '@nestjs/event-emitter'
+
+@Injectable()
+export class OrderCancelledHandler {
+  @OnEvent('OrderCancelled')
+  public async handle(event: { orderId: string; reason: string }): Promise<void> {
+    // 후속 처리
+  }
+}
+```
+
+#### 방식 B: @nestjs/cqrs EventBus (CQRS 패턴)
+
+```typescript
+// infrastructure/domain-event-publisher.ts
+import { Injectable } from '@nestjs/common'
+import { EventBus } from '@nestjs/cqrs'
+
+// 이벤트 클래스 레지스트리 — eventType 문자열을 클래스로 매핑
+const EVENT_REGISTRY: Record<string, new (payload: any) => object> = {}
+
+export function RegisterEvent(eventClass: new (payload: any) => object): void {
+  EVENT_REGISTRY[eventClass.name] = eventClass
+}
+
+@Injectable()
+export class DomainEventPublisher {
+  constructor(private readonly eventBus: EventBus) {}
+
+  public async publish(eventType: string, payload: object): Promise<void> {
+    const EventClass = EVENT_REGISTRY[eventType]
+    if (EventClass) {
+      this.eventBus.publish(new EventClass(payload))
+    }
+  }
+}
+```
+
+```typescript
+// domain/order-cancelled.ts — 이벤트 클래스 등록
+import { RegisterEvent } from '@/infrastructure/domain-event-publisher'
+
+export class OrderCancelled {
+  public readonly orderId: string
+  public readonly reason: string
+  public readonly cancelledAt: Date
+
+  constructor(params: { orderId: string; reason: string; cancelledAt: Date }) {
+    this.orderId = params.orderId
+    this.reason = params.reason
+    this.cancelledAt = params.cancelledAt
+  }
+}
+
+RegisterEvent(OrderCancelled)
+```
+
+```typescript
+// application/event/order-cancelled-handler.ts
+import { EventsHandler, IEventHandler } from '@nestjs/cqrs'
+
+import { OrderCancelled } from '@/order/domain/order-cancelled'
+
+@EventsHandler(OrderCancelled)
+export class OrderCancelledHandler implements IEventHandler<OrderCancelled> {
+  public async handle(event: OrderCancelled): Promise<void> {
+    // 후속 처리
+  }
+}
+```
+
+### Command Service에서의 패턴
+
+Aggregate 저장과 이벤트 outbox 저장을 **같은 트랜잭션**에서 수행한다.
+
+```typescript
+public async cancelOrder(command: CancelOrderCommand): Promise<void> {
+  const order = await this.orderRepository.findOrders({ ... }).then((r) => r.orders.pop())
+  if (!order) throw new Error(...)
+
+  order.cancel(command.reason)                              // 도메인 메서드 → 이벤트 수집
+
+  await this.transactionManager.run(async () => {           // 하나의 트랜잭션
+    await this.orderRepository.saveOrder(order)             //   Aggregate 저장
+    await this.outboxWriter.saveAll(order.domainEvents)     //   이벤트를 outbox에 저장
+  })
+  order.clearEvents()
+}
+```
+
+### 디렉토리 구조
+
+```
+src/
+  infrastructure/
+    typeorm/
+      outbox.entity.ts              ← Outbox 테이블 Entity
+    outbox-writer.ts                 ← 트랜잭션 안에서 이벤트 저장
+    outbox-processor.ts              ← 폴링으로 미발행 이벤트 발행
+    domain-event-publisher.ts        ← 이벤트를 핸들러에 전달
+  <domain>/
+    domain/
+      <domain-event>.ts              ← Domain Event 정의
+    application/
+      event/
+        <domain-event>-handler.ts    ← EventHandler (후속 처리)
+```
+
+### Module 등록
+
+```typescript
+// app-module.ts
+import { ScheduleModule } from '@nestjs/schedule'
+import { EventEmitterModule } from '@nestjs/event-emitter'  // 방식 A
+// 또는 import { CqrsModule } from '@nestjs/cqrs'           // 방식 B
+
+@Module({
+  imports: [
+    ScheduleModule.forRoot(),
+    EventEmitterModule.forRoot(),  // 방식 A
+    // CqrsModule,                 // 방식 B
+    TypeOrmModule.forFeature([OutboxEntity]),
+    // ...
+  ],
+  providers: [OutboxProcessor, DomainEventPublisher]
+})
+export class AppModule {}
+
+// order-module.ts
+@Module({
+  providers: [OrderCommandService, OutboxWriter, OrderCancelledHandler, ...]
+})
+export class OrderModule {}
+```
+
+### 원칙
+
+- **이벤트는 Aggregate 내부에서만 수집한다**: Command Service가 직접 이벤트를 생성하지 않는다.
+- **Aggregate 저장과 이벤트 저장은 같은 트랜잭션이다**: outbox에 함께 저장하여 원자성을 보장한다.
+- **이벤트 발행은 별도 프로세스(OutboxProcessor)가 담당한다**: Command Service는 발행을 신경쓰지 않는다.
+- **이벤트 핸들러는 application/event/에 배치한다**: 도메인 레이어가 아닌 application 레이어에서 후속 처리를 조율한다.
+- **도메인 메서드에 이벤트가 없는 경우**: `outboxWriter.saveAll()`과 `clearEvents()` 호출을 생략한다.
+
+---
+
+## 7. 데이터베이스 쿼리 패턴 (TypeORM 기준)
 
 ### TypeORM 쿼리 스타일 — Repository 구현체에서만 DB 접근
 
@@ -1142,7 +1466,8 @@ export class OrderCommandService {
   constructor(
     private readonly orderRepository: OrderRepository,
     private readonly paymentRepository: PaymentRepository,
-    private readonly transactionManager: TransactionManager
+    private readonly transactionManager: TransactionManager,
+    private readonly outboxWriter: OutboxWriter
   ) {}
 
   public async cancelOrder(command: CancelOrderCommand): Promise<void> {
@@ -1153,24 +1478,29 @@ export class OrderCommandService {
 
     order.cancel(command.reason)
 
-    // 여러 Repository 호출을 하나의 트랜잭션으로 묶는다
+    // Aggregate 저장 + 이벤트 outbox 저장을 하나의 트랜잭션으로
     await this.transactionManager.run(async () => {
       await this.paymentRepository.deletePaymentMethods(order.orderId)
       await this.orderRepository.saveOrder(order)
+      await this.outboxWriter.saveAll(order.domainEvents)
     })
+    order.clearEvents()
   }
 }
 ```
 
-#### 단일 Repository 호출은 트랜잭션 불필요
+#### 이벤트가 있는 단일 Repository 호출
 
-Repository 하나만 호출하는 Command는 `transactionManager.run()`으로 감싸지 않는다.
+도메인 이벤트가 수집된 경우, 단일 Repository 호출이라도 outbox 저장을 함께 트랜잭션으로 묶는다.
 
 ```typescript
-// 올바른 방식 — 단일 Repository 호출은 트랜잭션 불필요
 public async createOrder(command: CreateOrderCommand): Promise<void> {
   const order = new Order({ ... })
-  await this.orderRepository.saveOrder(order)
+  await this.transactionManager.run(async () => {
+    await this.orderRepository.saveOrder(order)
+    await this.outboxWriter.saveAll(order.domainEvents)
+  })
+  order.clearEvents()
 }
 
 // 잘못된 방식 — 불필요한 트랜잭션 래핑
@@ -1303,7 +1633,7 @@ public async deleteOrder(orderId: string): Promise<void> {
 
 ---
 
-## 7. 인증 패턴 — Bearer Access Token
+## 8. 인증 패턴 — Bearer Access Token
 
 ### 인증 흐름
 
@@ -1492,7 +1822,7 @@ export class LoggingInterceptor implements NestInterceptor {
 
 ---
 
-## 8. Domain Service 패턴
+## 9. Domain Service 패턴
 
 ### Domain Service가 필요한 경우
 
@@ -1541,7 +1871,7 @@ public async applyCoupon(command: ApplyCouponCommand): Promise<void> {
 
 ---
 
-## 9. 공유 모듈 구조
+## 10. 공유 모듈 구조
 
 도메인에 속하지 않는 공유 코드는 아래 경로에 배치한다:
 
@@ -1573,7 +1903,7 @@ src/
 
 ---
 
-## 10. 크로스 도메인 호출 패턴
+## 11. 크로스 도메인 호출 패턴
 
 다른 도메인의 기능을 호출할 때는 항상 **Adapter 패턴**을 사용한다 (섹션 4 "모듈 간 의존" 참조).
 
@@ -1632,7 +1962,7 @@ public async getOrderWithUser(param: { orderId: number }): Promise<GetOrderWithU
 
 ---
 
-## 11. Aggregate 생성과 ID 처리
+## 12. Aggregate 생성과 ID 처리
 
 모든 Aggregate의 ID는 **UUID v4 (하이픈 제거)** 형식의 문자열을 사용한다. Aggregate 생성자에서 직접 ID를 할당한다.
 
@@ -1731,7 +2061,7 @@ public async saveOrder(order: Order): Promise<void> {
 
 ---
 
-## 12. @nestjs/cqrs 적용 패턴
+## 13. @nestjs/cqrs 적용 패턴
 
 `@nestjs/cqrs` 패키지를 사용하면 Application 레이어의 Service를 Command Handler / Query Handler / Event Handler로 분리한다. 기존 아키텍처의 원칙(Domain 레이어 무의존, Aggregate 비즈니스 규칙 캡슐화, Repository 패턴)은 동일하게 유지한다.
 
@@ -1804,8 +2134,10 @@ export class CancelOrderCommand {
 
 ```typescript
 // application/command/cancel-order-command-handler.ts — CommandHandler
-import { CommandHandler, EventBus, ICommandHandler } from '@nestjs/cqrs'
+import { CommandHandler, ICommandHandler } from '@nestjs/cqrs'
 
+import { OutboxWriter } from '@/infrastructure/outbox-writer'
+import { TransactionManager } from '@/infrastructure/transaction-manager'
 import { CancelOrderCommand } from '@/order/application/command/cancel-order-command'
 import { OrderRepository } from '@/order/domain/order-repository'
 import { PaymentRepository } from '@/order/domain/payment-repository'
@@ -1816,7 +2148,8 @@ export class CancelOrderCommandHandler implements ICommandHandler<CancelOrderCom
   constructor(
     private readonly orderRepository: OrderRepository,
     private readonly paymentRepository: PaymentRepository,
-    private readonly eventBus: EventBus
+    private readonly transactionManager: TransactionManager,
+    private readonly outboxWriter: OutboxWriter
   ) {}
 
   public async execute(command: CancelOrderCommand): Promise<void> {
@@ -1825,14 +2158,14 @@ export class CancelOrderCommandHandler implements ICommandHandler<CancelOrderCom
       .then((r) => r.orders.pop())
     if (!order) throw new Error(ErrorMessage['주문을 찾을 수 없습니다.'])
 
-    // 도메인 메서드 호출 (비즈니스 규칙은 Aggregate 내부에서 검증)
     order.cancel(command.reason)
 
-    await this.paymentRepository.deletePaymentMethods(order.orderId)
-    await this.orderRepository.saveOrder(order)
-
-    // Domain Event 발행
-    order.domainEvents.forEach((event) => this.eventBus.publish(event))
+    // Aggregate 저장 + 이벤트 outbox 저장을 같은 트랜잭션으로
+    await this.transactionManager.run(async () => {
+      await this.paymentRepository.deletePaymentMethods(order.orderId)
+      await this.orderRepository.saveOrder(order)
+      await this.outboxWriter.saveAll(order.domainEvents)
+    })
     order.clearEvents()
   }
 }
@@ -2030,7 +2363,7 @@ export class OrderModule {}
 
 ---
 
-## 13. 환경 설정 패턴 (ConfigModule)
+## 14. 환경 설정 패턴 (ConfigModule)
 
 ### 디렉토리 구조
 
@@ -2181,7 +2514,7 @@ export class SomeInfraService {
 
 ---
 
-## 14. 핵심 설계 원칙 요약
+## 15. 핵심 설계 원칙 요약
 
 1. **도메인 우선 디렉토리 구조** — `src/<domain>/` 하위에 domain/application/interface/infrastructure 4개 레이어 배치
 2. **Domain 레이어는 프레임워크 무의존** — 순수 TypeScript. NestJS 데코레이터(@Injectable 등) 사용 금지
