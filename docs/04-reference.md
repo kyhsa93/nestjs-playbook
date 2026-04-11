@@ -474,9 +474,9 @@ export class OrderRepositoryImpl extends OrderRepository {
 
   public async deleteOrder(orderId: string): Promise<void> {
     const manager = this.transactionManager.getManager()
-    // cascade: 하위 엔티티 먼저 삭제
-    await manager.delete(OrderItemEntity, { orderId })
-    await manager.delete(OrderEntity, { orderId })
+    // cascade soft delete: 하위 엔티티 먼저
+    await manager.softDelete(OrderItemEntity, { orderId })
+    await manager.softDelete(OrderEntity, { orderId })
   }
 }
 ```

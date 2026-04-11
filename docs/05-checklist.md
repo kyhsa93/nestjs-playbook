@@ -307,6 +307,10 @@
 ## STEP 12 — DB / 인프라 패턴
 
 ```
+[ ] TypeORM Entity가 BaseEntity를 상속하여 createdAt, updatedAt, deletedAt 컬럼을 포함하는가?
+[ ] 삭제 시 manager.delete()가 아닌 manager.softDelete()를 사용하는가?
+    → hard delete(manager.delete) 사용 금지
+[ ] 하위 엔티티도 함께 soft delete 처리되는가?
 [ ] TypeORM Entity 프로퍼티명이 camelCase인가? (snake_case 컬럼은 @Column({ name: '...' })로 매핑)
 [ ] 여러 Repository에 걸친 쓰기 작업이 TransactionManager.run()으로 묶여 있는가?
     → Command Service에서 2개 이상의 Repository를 호출하면 트랜잭션 필수

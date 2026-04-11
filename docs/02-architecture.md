@@ -6,6 +6,7 @@
 src/
   infrastructure/
     typeorm/
+      base.entity.ts                   # 공통 컬럼 (createdAt, updatedAt, deletedAt)
       data-source.ts                   # TypeORM DataSource 설정
     transaction-manager.ts             # 트랜잭션 매니저 (AsyncLocalStorage 기반)
   config/
@@ -324,8 +325,8 @@ export class OrderRepositoryImpl extends OrderRepository {
   public async deleteOrder(orderId: number): Promise<void> {
     const manager = this.transactionManager.getManager()
     // cascade: 하위 엔티티 먼저 삭제
-    await manager.delete(OrderItemEntity, { orderId })
-    await manager.delete(OrderEntity, { orderId })
+    await manager.softDelete(OrderItemEntity, { orderId })
+    await manager.softDelete(OrderEntity, { orderId })
   }
 }
 ```
@@ -465,9 +466,9 @@ Service는 cascade 순서를 직접 관리하지 않고, 도메인 단위의 단
 public async deleteGroup(groupId: number): Promise<void> {
   const manager = this.transactionManager.getManager()
   // FK 참조 순서: mapping tables 먼저 → main entity 순으로 삭제
-  await manager.delete(GroupRoleMapEntity, { groupId })
-  await manager.delete(UserGroupMapEntity, { groupId })
-  await manager.delete(GroupEntity, { groupId })
+  await manager.softDelete(GroupRoleMapEntity, { groupId })
+  await manager.softDelete(UserGroupMapEntity, { groupId })
+  await manager.softDelete(GroupEntity, { groupId })
 }
 ```
 
@@ -1060,10 +1061,10 @@ public async createOrder(command: CreateOrderCommand): Promise<void> {
 
 ```typescript
 // infrastructure/order-repository-impl.ts
-public async deleteOrder(orderId: number): Promise<void> {
+public async deleteOrder(orderId: string): Promise<void> {
   const manager = this.transactionManager.getManager()
-  await manager.delete(OrderItemEntity, { orderId })
-  await manager.delete(OrderEntity, { orderId })
+  await manager.softDelete(OrderItemEntity, { orderId })
+  await manager.softDelete(OrderEntity, { orderId })
 }
 ```
 
@@ -1082,6 +1083,96 @@ if (query.name) qb.andWhere('order.name LIKE :name', { name: `%${query.name}%` }
 - TypeORM Entity 프로퍼티명: **camelCase** 사용
 - `order.orderId` (O) / `order.order_id` (X)
 - DB 컬럼명이 snake_case인 경우 `@Column({ name: 'order_id' })`로 매핑
+
+### Entity 공통 컬럼 — createdAt, updatedAt, deletedAt
+
+모든 TypeORM Entity는 `createdAt`, `updatedAt`, `deletedAt` 컬럼을 포함한다. 공통 컬럼은 `BaseEntity`를 상속하여 적용한다.
+
+```typescript
+// infrastructure/typeorm/base.entity.ts
+import { CreateDateColumn, UpdateDateColumn, DeleteDateColumn } from 'typeorm'
+
+export abstract class BaseEntity {
+  @CreateDateColumn()
+  createdAt: Date
+
+  @UpdateDateColumn()
+  updatedAt: Date
+
+  @DeleteDateColumn()
+  deletedAt: Date | null
+}
+```
+
+모든 Entity는 `BaseEntity`를 상속한다:
+
+```typescript
+// infrastructure/entity/order.entity.ts
+import { Entity, PrimaryColumn, Column, OneToMany } from 'typeorm'
+
+import { BaseEntity } from '@/infrastructure/typeorm/base.entity'
+import { OrderItemEntity } from '@/order/infrastructure/entity/order-item.entity'
+
+@Entity('order')
+export class OrderEntity extends BaseEntity {
+  @PrimaryColumn({ type: 'char', length: 32 })
+  orderId: string
+
+  @Column({ type: 'char', length: 32 })
+  userId: string
+
+  @Column()
+  status: string
+
+  @OneToMany(() => OrderItemEntity, (item) => item.order, { cascade: true })
+  items: OrderItemEntity[]
+}
+```
+
+### Soft Delete
+
+데이터 삭제 시 실제 삭제(hard delete)가 아닌 `deletedAt`에 타임스탬프를 기록하는 soft delete를 사용한다.
+
+#### TypeORM 설정
+
+`@DeleteDateColumn()`이 선언된 Entity는 TypeORM의 `softDelete` / `softRemove` 메서드를 사용하면 자동으로 `deletedAt`이 설정된다. `find` 계열 메서드는 `deletedAt IS NULL` 조건을 자동 적용한다.
+
+#### Repository 구현체에서의 삭제
+
+```typescript
+// 올바른 방식 — soft delete
+public async deleteOrder(orderId: string): Promise<void> {
+  const manager = this.transactionManager.getManager()
+  await manager.softDelete(OrderEntity, { orderId })
+}
+
+// 잘못된 방식 — hard delete
+public async deleteOrder(orderId: string): Promise<void> {
+  const manager = this.transactionManager.getManager()
+  await manager.delete(OrderEntity, { orderId })  // 실제 삭제 — 사용 금지
+}
+```
+
+#### 삭제된 데이터 조회가 필요한 경우
+
+```typescript
+// withDeleted 옵션으로 삭제된 데이터 포함 조회
+const qb = this.orderRepo.createQueryBuilder('order')
+  .withDeleted()
+  .andWhere('order.orderId = :orderId', { orderId })
+```
+
+#### 하위 엔티티 cascade soft delete
+
+하위 엔티티도 함께 soft delete해야 하는 경우, Repository 구현체 내부에서 명시적으로 처리한다:
+
+```typescript
+public async deleteOrder(orderId: string): Promise<void> {
+  const manager = this.transactionManager.getManager()
+  await manager.softDelete(OrderItemEntity, { orderId })
+  await manager.softDelete(OrderEntity, { orderId })
+}
+```
 
 ---
 
@@ -1323,8 +1414,10 @@ export class Order {
 
 ```typescript
 // infrastructure/entity/order.entity.ts
+import { BaseEntity } from '@/infrastructure/typeorm/base.entity'
+
 @Entity('order')
-export class OrderEntity {
+export class OrderEntity extends BaseEntity {
   @PrimaryColumn({ type: 'char', length: 32 })
   orderId: string
 
