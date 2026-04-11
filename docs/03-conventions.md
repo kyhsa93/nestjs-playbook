@@ -728,6 +728,49 @@ describe('OrderController (e2e)', () => {
 })
 ```
 
+### 테스트 DB 설정 — SQLite In-Memory
+
+E2E 테스트와 통합 테스트에서는 **SQLite in-memory DB**를 사용하여 테스트 환경을 격리한다.
+
+```typescript
+// test/test-database.ts
+import { TypeOrmModule } from '@nestjs/typeorm'
+
+export const TestDatabaseModule = TypeOrmModule.forRoot({
+  type: 'sqlite',
+  database: ':memory:',
+  entities: [__dirname + '/../src/**/*.entity.ts'],
+  synchronize: true  // 테스트 환경에서만 사용
+})
+```
+
+```typescript
+// test/order.e2e-spec.ts
+describe('OrderController (e2e)', () => {
+  let app: INestApplication
+
+  beforeAll(async () => {
+    const module = await Test.createTestingModule({
+      imports: [
+        TestDatabaseModule,  // 실제 DB 대신 SQLite in-memory 사용
+        OrderModule
+      ]
+    }).compile()
+
+    app = module.createNestApplication()
+    app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }))
+    await app.init()
+  })
+
+  afterAll(() => app.close())
+})
+```
+
+**원칙:**
+- E2E/통합 테스트는 `synchronize: true`인 SQLite in-memory DB를 사용한다.
+- 테스트마다 DB가 초기화되므로 테스트 간 데이터 간섭이 없다.
+- 운영 DB와 SQLite 간 SQL 차이가 문제될 경우 **testcontainers**로 실제 DB를 사용한다.
+
 ### 테스트 네이밍 패턴
 
 ```

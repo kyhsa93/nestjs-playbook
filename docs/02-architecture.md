@@ -1031,25 +1031,60 @@ export enum OrderErrorMessage {
 import { OrderErrorMessage as ErrorMessage } from '@/order/order-error-message'
 ```
 
-### 전역 예외 필터 (선택적 — 프로젝트 공통 설정)
+### 에러 응답 형식 — 표준 JSON 구조
+
+모든 에러 응답은 아래 형식을 따른다. 클라이언트는 이 형식을 기반으로 에러 처리를 구현한다.
+
+```json
+{
+  "statusCode": 404,
+  "message": "주문을 찾을 수 없습니다.",
+  "error": "Not Found"
+}
+```
+
+| 필드 | 타입 | 설명 |
+|------|------|------|
+| `statusCode` | `number` | HTTP 상태 코드 |
+| `message` | `string` | ErrorMessage enum에 정의된 에러 메시지 |
+| `error` | `string` | HTTP 상태 텍스트 |
+
+Validation 실패 시 (class-validator):
+
+```json
+{
+  "statusCode": 400,
+  "message": ["orderId must be a string", "reason must be longer than or equal to 1 characters"],
+  "error": "Bad Request"
+}
+```
+
+### 전역 예외 필터
 
 ```typescript
 // src/common/http-exception.filter.ts
+import { ArgumentsHost, Catch, ExceptionFilter, HttpException, Logger } from '@nestjs/common'
+import { Response } from 'express'
+
 @Catch(HttpException)
 export class HttpExceptionFilter implements ExceptionFilter {
+  private readonly logger = new Logger(HttpExceptionFilter.name)
+
   catch(exception: HttpException, host: ArgumentsHost) {
     const ctx = host.switchToHttp()
     const response = ctx.getResponse<Response>()
     const status = exception.getStatus()
-    response.status(status).json({
-      statusCode: status,
-      message: exception.message
-    })
+    const exceptionResponse = exception.getResponse()
+
+    this.logger.error({ status, message: exception.message })
+
+    response.status(status).json(
+      typeof exceptionResponse === 'string'
+        ? { statusCode: status, message: exceptionResponse, error: exception.name }
+        : exceptionResponse
+    )
   }
 }
-
-// main.ts
-app.useGlobalFilters(new HttpExceptionFilter())
 ```
 
 ---
@@ -1407,6 +1442,51 @@ export class OrderModule {}
 - **이벤트 핸들러는 application/event/에 배치한다**: 도메인 레이어가 아닌 application 레이어에서 후속 처리를 조율한다.
 - **도메인 메서드에 이벤트가 없는 경우**: `outboxWriter.saveAll()`과 `clearEvents()` 호출을 생략한다.
 
+### 이벤트 핸들러 멱등성
+
+OutboxProcessor가 이벤트 발행 후 `processed: true`로 업데이트하기 전에 실패하면, 같은 이벤트가 **재발행**될 수 있다. 따라서 모든 EventHandler는 **멱등(idempotent)** 하게 구현해야 한다.
+
+```typescript
+// 올바른 방식 — 멱등한 핸들러
+@OnEvent('OrderCancelled')
+public async handle(event: { orderId: string }): Promise<void> {
+  // 이미 처리된 이벤트인지 확인 후 처리
+  const refund = await this.refundRepository
+    .findRefunds({ orderId: event.orderId, take: 1, page: 0 })
+    .then((r) => r.refunds.pop())
+  if (refund) return  // 이미 환불 처리됨 — 중복 실행 방지
+  await this.refundRepository.saveRefund(new Refund({ orderId: event.orderId, ... }))
+}
+
+// 잘못된 방식 — 멱등하지 않은 핸들러
+@OnEvent('OrderCancelled')
+public async handle(event: { orderId: string }): Promise<void> {
+  // 중복 체크 없이 바로 생성 — 재발행 시 환불이 두 번 생성됨
+  await this.refundRepository.saveRefund(new Refund({ orderId: event.orderId, ... }))
+}
+```
+
+**멱등성 보장 방법:**
+- 핸들러 시작 시 이미 처리된 상태인지 확인한 후 처리
+- 또는 DB unique 제약으로 중복 생성을 방지
+
+### Outbox 테이블 정리
+
+`processed: true`인 이벤트는 일정 기간 후 삭제하여 테이블 비대화를 방지한다.
+
+```typescript
+// outbox/outbox-processor.ts — 정리 스케줄 추가
+@Cron('0 3 * * *')  // 매일 03:00
+public async cleanup(): Promise<void> {
+  const repo = this.dataSource.getRepository(OutboxEntity)
+  const threshold = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)  // 7일 전
+  await repo.delete({ processed: true, createdAt: LessThan(threshold) })
+}
+```
+
+- 보관 기간은 프로젝트 요구사항에 따라 조정한다 (기본 7일).
+- 정리 대상은 `processed: true`인 이벤트만이다.
+
 ---
 
 ## 7. 데이터베이스 쿼리 패턴 (TypeORM 기준)
@@ -1672,6 +1752,41 @@ public async deleteOrder(orderId: string): Promise<void> {
   await manager.softDelete(OrderEntity, { orderId })
 }
 ```
+
+### 마이그레이션 — TypeORM CLI
+
+스키마 변경은 TypeORM 마이그레이션으로 관리한다. Entity를 수정한 후 마이그레이션 파일을 생성하고, 배포 시 실행한다.
+
+#### 디렉토리 구조
+
+```
+src/
+  database/
+    migrations/                      # 마이그레이션 파일
+      1712345678901-create-order.ts
+      1712345678902-add-order-status.ts
+    data-source.ts                   # CLI와 앱 모두에서 사용하는 DataSource
+```
+
+#### 마이그레이션 명령어
+
+```bash
+# 마이그레이션 생성 — Entity 변경 사항을 감지하여 자동 생성
+npx typeorm migration:generate src/database/migrations/create-order -d src/database/data-source.ts
+
+# 마이그레이션 실행
+npx typeorm migration:run -d src/database/data-source.ts
+
+# 마이그레이션 롤백 (마지막 1개)
+npx typeorm migration:revert -d src/database/data-source.ts
+```
+
+#### 원칙
+
+- **Entity 수정 후 반드시 마이그레이션 생성**: `synchronize: true`는 개발 환경에서만 사용하고, 운영 환경에서는 마이그레이션으로 스키마를 관리한다.
+- **마이그레이션 파일은 커밋에 포함**: 자동 생성된 파일을 검토한 후 커밋한다.
+- **롤백 가능한 마이그레이션 작성**: `up()`과 `down()` 모두 구현한다.
+- **데이터 마이그레이션은 별도 파일**: 스키마 변경과 데이터 변환을 같은 마이그레이션에 넣지 않는다.
 
 ---
 
@@ -2563,7 +2678,65 @@ export class SomeInfraService {
 
 ---
 
-## 15. 핵심 설계 원칙 요약
+## 15. 앱 부트스트랩 — main.ts
+
+```typescript
+// src/main.ts
+import { ValidationPipe } from '@nestjs/common'
+import { NestFactory } from '@nestjs/core'
+import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger'
+
+import { HttpExceptionFilter } from '@/common/http-exception.filter'
+import { AppModule } from '@/app-module'
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule)
+
+  // 전역 ValidationPipe — class-validator 자동 적용
+  app.useGlobalPipes(new ValidationPipe({
+    whitelist: true,           // DTO에 정의되지 않은 필드 제거
+    forbidNonWhitelisted: true, // 정의되지 않은 필드가 있으면 400 에러
+    transform: true             // 요청 데이터를 DTO 클래스 인스턴스로 자동 변환
+  }))
+
+  // 전역 예외 필터
+  app.useGlobalFilters(new HttpExceptionFilter())
+
+  // CORS
+  app.enableCors({
+    origin: process.env.CORS_ORIGIN?.split(',') ?? '*',
+    credentials: true
+  })
+
+  // Swagger
+  const document = SwaggerModule.createDocument(app,
+    new DocumentBuilder()
+      .setTitle(process.env.APP_NAME ?? 'API')
+      .setVersion('1.0')
+      .addBearerAuth({ type: 'http', scheme: 'bearer', bearerFormat: 'JWT' }, 'token')
+      .build()
+  )
+  SwaggerModule.setup('api', app, document)
+
+  await app.listen(process.env.PORT ?? 3000)
+}
+
+bootstrap()
+```
+
+### 설정 요약
+
+| 설정 | 역할 |
+|------|------|
+| `ValidationPipe` | class-validator 데코레이터 자동 적용, 미정의 필드 차단 |
+| `HttpExceptionFilter` | 에러 응답 형식 표준화 |
+| `enableCors` | CORS 허용 origin 설정 (환경 변수) |
+| `SwaggerModule` | API 문서 자동 생성, `/api` 경로에서 접근 |
+| `addBearerAuth` | Swagger UI에서 JWT 토큰 입력 지원 |
+
+---
+
+## 16. 핵심 설계 원칙 요약
 
 1. **도메인 우선 디렉토리 구조** — `src/<domain>/` 하위에 domain/application/interface/infrastructure 4개 레이어 배치
 2. **Domain 레이어는 프레임워크 무의존** — 순수 TypeScript. NestJS 데코레이터(@Injectable 등) 사용 금지

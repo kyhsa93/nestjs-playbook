@@ -345,6 +345,10 @@
     → 올바른 예: .findOrders({ orderId, take: 1, page: 0 }).then((r) => r.orders.pop())
 [ ] 동적 where 조건에 QueryBuilder 조건부 체이닝 패턴을 사용하는가?
     → 올바른 예: if (query.status) qb.andWhere('order.status IN (:...status)', { status: query.status })
+[ ] Entity 수정 후 마이그레이션 파일을 생성했는가?
+    → 운영 환경에서 synchronize: true 사용 금지
+[ ] 이벤트 핸들러가 멱등하게 구현되어 있는가?
+    → 이미 처리된 상태인지 확인 후 처리, 또는 DB unique 제약으로 중복 방지
 ```
 
 ---
@@ -357,6 +361,8 @@
 [ ] Application Service 테스트에서 Repository를 mock으로 대체하고 있는가?
     → jest.Mocked<AbstractClass> 패턴 사용
 [ ] E2E 테스트에서 실제 HTTP 요청을 통해 유스케이스 흐름을 검증하는가?
+[ ] E2E/통합 테스트에서 SQLite in-memory DB (또는 testcontainers)를 사용하는가?
+    → 운영 DB에 직접 연결하지 않는다
 [ ] Aggregate 불변식 위반 테스트가 작성되어 있는가? (잘못된 입력 → 예외 발생)
 [ ] Domain Event 발행 여부를 검증하는 테스트가 있는가?
 ```
