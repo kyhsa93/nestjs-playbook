@@ -184,6 +184,11 @@
     → 단건 조회 시 take: 1 + .then(r => r.<noun>s.pop()) 패턴 사용
 [ ] 단순 유틸 함수(날짜 포맷, 문자열 변환 등)를 기술 인프라 Service로 분리하고 있는가?
     → 있다면 일반 함수로 변경. 외부 시스템 연동·구현 기술 교체 가능성이 있는 기술 관심사에만 적용
+[ ] 파일 업로드/다운로드 시 서버가 파일 바이너리를 직접 처리하는가?
+    → 있다면 Presigned URL 패턴으로 변경. 서버는 URL 발급만, 클라이언트↔스토리지 직접 통신
+[ ] 파일 소유 Entity에 fileKey(char 32)와 extension(varchar) 컬럼이 있는가?
+    → DB에는 메타데이터만 저장, 파일 자체는 스토리지에 저장
+[ ] StorageService가 기술 인프라 Service 패턴(application/service/에 abstract class, infrastructure/에 구현체)으로 분리되어 있는가?
 [ ] ConfigModule.forRoot()이 AppModule에 isGlobal: true로 등록되어 있는가?
 [ ] 환경 변수별 설정이 관심사별 파일(config/<concern>.config.ts)로 분리되어 있는가?
 [ ] config-validator.ts에 class-validator로 필수 환경 변수 검증이 정의되어 있는가?
