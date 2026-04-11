@@ -189,7 +189,7 @@ export abstract class PaymentRepository {
   abstract findPaymentMethods(query: {
     readonly take: number
     readonly page: number
-    readonly orderId?: number
+    readonly orderId?: string
   }): Promise<{ paymentMethods: PaymentMethod[]; count: number }>
 
   abstract deletePaymentMethods(orderId: string): Promise<void>
@@ -332,7 +332,7 @@ export class CancelOrderCommand {
 // application/command/create-order-command.ts
 import { ApiProperty } from '@nestjs/swagger'
 import { Type } from 'class-transformer'
-import { IsArray, IsInt, Min } from 'class-validator'
+import { IsArray, IsInt, IsString, Min, MinLength } from 'class-validator'
 
 export class CreateOrderCommand {
   @ApiProperty()
@@ -605,8 +605,7 @@ export class OrderController {
 ```typescript
 // application/query/get-order-param.ts
 import { ApiProperty } from '@nestjs/swagger'
-import { Type } from 'class-transformer'
-import { IsInt, Min } from 'class-validator'
+import { IsString, MinLength } from 'class-validator'
 
 export class GetOrderParam {
   @ApiProperty()
@@ -688,7 +687,6 @@ import { Module } from '@nestjs/common'
 import { TypeOrmModule } from '@nestjs/typeorm'
 
 import { AuthService } from '@/auth/auth-service'
-import { TransactionManager } from '@/database/transaction-manager'
 import { OrderService } from '@/order/application/order-service'
 import { CryptoService } from '@/order/application/service/crypto-service'
 import { OrderRepository } from '@/order/domain/order-repository'

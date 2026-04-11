@@ -673,11 +673,15 @@ src/
       <domain>-service.ts            # Application Service — 유스케이스 조율
       adapter/
         <external-domain>-adapter.ts # 외부 도메인 호출 인터페이스 (abstract class)
+      service/
+        <service-name>.ts            # 외부 시스템 호출 인터페이스 (abstract class)
       command/
         <verb>-<noun>-command.ts
       query/
         <verb>-<noun>-query.ts
         <verb>-<noun>-result.ts
+      event/
+        <domain-event>-handler.ts    # Domain Event Handler
     interface/
       <domain>-controller.ts
       dto/
@@ -692,6 +696,9 @@ src/
     <domain>-error-message.ts
     <domain>-enum.ts
     <domain>-constant.ts
+  database/                          # DatabaseModule — TypeORM DataSource, TransactionManager (@Global)
+  outbox/                            # OutboxModule — OutboxWriter, OutboxProcessor, DomainEventPublisher (@Global)
+  config/                            # 설정 파일 (config-validator, database.config 등)
 ```
 
 패키지 구조를 사용자에게 제안하고, 확인 후 디렉토리와 기본 파일을 생성한다.

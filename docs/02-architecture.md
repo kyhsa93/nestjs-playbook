@@ -94,13 +94,13 @@ import { OrderErrorMessage } from '@/order/order-error-message'
 export type OrderDomainEvent = OrderCancelled
 
 export class Order {
-  public readonly orderId: number
-  public readonly userId: number
+  public readonly orderId: string
+  public readonly userId: string
   public readonly items: OrderItem[]
   private _status: 'pending' | 'paid' | 'cancelled'
   private readonly _events: OrderDomainEvent[] = []
 
-  constructor(params: { orderId: number; userId: number; items: OrderItem[]; status: 'pending' | 'paid' | 'cancelled' }) {
+  constructor(params: { orderId: string; userId: string; items: OrderItem[]; status: 'pending' | 'paid' | 'cancelled' }) {
     if (params.items.length === 0) throw new Error(OrderErrorMessage['주문 항목은 최소 1개 이상이어야 합니다.'])
     this.orderId = params.orderId
     this.userId = params.userId
@@ -129,11 +129,11 @@ export abstract class OrderRepository {
   abstract findOrders(query: {
     readonly take: number
     readonly page: number
-    readonly orderId?: number
-    readonly userId?: number
+    readonly orderId?: string
+    readonly userId?: string
     readonly status?: string[]
   }): Promise<{ orders: Order[]; count: number }>
-  abstract deleteOrder(orderId: number): Promise<void>
+  abstract deleteOrder(orderId: string): Promise<void>
 }
 ```
 
@@ -292,8 +292,8 @@ export class OrderRepositoryImpl extends OrderRepository {
   public async findOrders(query: {
     readonly take: number
     readonly page: number
-    readonly orderId?: number
-    readonly userId?: number
+    readonly orderId?: string
+    readonly userId?: string
     readonly status?: string[]
   }): Promise<{ orders: Order[]; count: number }> {
     const qb = this.orderRepo.createQueryBuilder('order')
@@ -323,7 +323,7 @@ export class OrderRepositoryImpl extends OrderRepository {
   public async saveOrder(order: Order): Promise<void> {
     const manager = this.transactionManager.getManager()
     await manager.save(OrderEntity, {
-      orderId: order.orderId || undefined,
+      orderId: order.orderId,
       userId: order.userId,
       status: order.status,
       items: order.items.map((i) => ({
@@ -335,7 +335,7 @@ export class OrderRepositoryImpl extends OrderRepository {
     })
   }
 
-  public async deleteOrder(orderId: number): Promise<void> {
+  public async deleteOrder(orderId: string): Promise<void> {
     const manager = this.transactionManager.getManager()
     // cascade: 하위 엔티티 먼저 삭제
     await manager.softDelete(OrderItemEntity, { orderId })
@@ -475,7 +475,7 @@ Service는 cascade 순서를 직접 관리하지 않고, 도메인 단위의 단
 
 ```typescript
 // infrastructure/group-repository-impl.ts 내부
-public async deleteGroup(groupId: number): Promise<void> {
+public async deleteGroup(groupId: string): Promise<void> {
   const manager = this.transactionManager.getManager()
   // FK 참조 순서: mapping tables 먼저 → main entity 순으로 삭제
   await manager.softDelete(GroupRoleMapEntity, { groupId })
@@ -510,7 +510,8 @@ src/
     ...
     payment-module.ts
   common/                ← 공유 유틸 (모듈 아님)
-  infrastructure/        ← 공유 인프라 (TypeORM DataSource, TransactionManager 등)
+  database/              ← DatabaseModule — TypeORM DataSource, TransactionManager (@Global)
+  outbox/                ← OutboxModule — OutboxWriter, OutboxProcessor, DomainEventPublisher (@Global)
   auth/                  ← AuthModule — 인증 공유 모듈
   app-module.ts          ← 루트 모듈: 도메인 모듈 조합
 ```
@@ -581,8 +582,8 @@ export abstract class UserAdapter {
   abstract findUsers(query: {
     readonly take: number
     readonly page: number
-    readonly userId?: number
-  }): Promise<{ users: { userId: number; name: string }[]; count: number }>
+    readonly userId?: string
+  }): Promise<{ users: { userId: string; name: string }[]; count: number }>
 }
 ```
 
@@ -606,8 +607,8 @@ export class UserAdapterImpl extends UserAdapter {
   public async findUsers(query: {
     readonly take: number
     readonly page: number
-    readonly userId?: number
-  }): Promise<{ users: { userId: number; name: string }[]; count: number }> {
+    readonly userId?: string
+  }): Promise<{ users: { userId: string; name: string }[]; count: number }> {
     return this.userService.getUsers(query)
   }
 }
@@ -627,7 +628,7 @@ export class OrderService {
     private readonly userAdapter: UserAdapter
   ) {}
 
-  public async getOrderWithUser(param: { orderId: number }): Promise<GetOrderWithUserResult> {
+  public async getOrderWithUser(param: { orderId: string }): Promise<GetOrderWithUserResult> {
     const order = await this.orderRepository
       .findOrders({ orderId: param.orderId, take: 1, page: 0 })
       .then((r) => r.orders.pop())
@@ -1972,8 +1973,8 @@ export abstract class UserAdapter {
   abstract findUsers(query: {
     readonly take: number
     readonly page: number
-    readonly userId?: number
-  }): Promise<{ users: { userId: number; name: string }[]; count: number }>
+    readonly userId?: string
+  }): Promise<{ users: { userId: string; name: string }[]; count: number }>
 }
 
 // order/infrastructure/user-adapter-impl.ts — 구현체
@@ -1989,14 +1990,14 @@ export class UserAdapterImpl extends UserAdapter {
   public async findUsers(query: {
     readonly take: number
     readonly page: number
-    readonly userId?: number
-  }): Promise<{ users: { userId: number; name: string }[]; count: number }> {
+    readonly userId?: string
+  }): Promise<{ users: { userId: string; name: string }[]; count: number }> {
     return this.userService.getUsers(query)
   }
 }
 
 // order/application/order-service.ts — Adapter를 통해 호출
-public async getOrderWithUser(param: { orderId: number }): Promise<GetOrderWithUserResult> {
+public async getOrderWithUser(param: { orderId: string }): Promise<GetOrderWithUserResult> {
   const order = await this.orderRepository
     .findOrders({ orderId: param.orderId, take: 1, page: 0 })
     .then((r) => r.orders.pop())
@@ -2165,11 +2166,10 @@ Command는 쓰기 요청을 나타내는 데이터 객체이다. CommandHandler�
 ```typescript
 // application/command/cancel-order-command.ts — Command 객체 (기존과 동일)
 export class CancelOrderCommand {
-  @ApiProperty({ minimum: 1 })
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  public readonly orderId: number
+  @ApiProperty({ minLength: 1 })
+  @IsString()
+  @MinLength(1)
+  public readonly orderId: string
 
   @ApiProperty({ minLength: 1 })
   @IsString()
@@ -2339,7 +2339,7 @@ export class OrderController {
   @ApiOperation({ operationId: 'cancelOrder' })
   @ApiNoContentResponse()
   public async cancelOrder(
-    @Param('orderId') orderId: number,
+    @Param('orderId') orderId: string,
     @Body() body: CancelOrderRequestBody
   ): Promise<void> {
     return this.commandBus.execute(new CancelOrderCommand({ ...body, orderId })).catch((error) => {

@@ -90,7 +90,7 @@ export const ALLOW_ORDER_STATUS_ARRAY = ['pending', 'paid']
 ```typescript
 export class Order {
   @ApiProperty()
-  public readonly orderId: number
+  public readonly orderId: string
 
   @ApiProperty({ nullable: true, type: String })
   public readonly description: string | null
@@ -104,7 +104,7 @@ export class Order {
 
 ```typescript
 export class CancelOrderCommand {
-  public readonly orderId: number
+  public readonly orderId: string
   public readonly reason: string
   public readonly refundAmount?: number
 
@@ -283,11 +283,11 @@ API 버전이 필요한 경우 URL 접두사로 관리한다.
 
 ```typescript
 // 올바른 방식
-public async getOrder(param: { orderId: number }): Promise<GetOrderResult> { ... }
+public async getOrder(param: { orderId: string }): Promise<GetOrderResult> { ... }
 public async cancelOrder(command: CancelOrderCommand): Promise<void> { ... }
 
 // 잘못된 방식
-public async getOrder(param: { orderId: number }) { ... }  // 반환 타입 누락
+public async getOrder(param: { orderId: string }) { ... }  // 반환 타입 누락
 ```
 
 ### private 환경 분기 헬퍼 메서드
@@ -367,7 +367,7 @@ export default class OrderRepository { ... }
 모든 public 엔드포인트에 완전한 Swagger 문서화 필수:
 
 ```typescript
-@ApiProperty({ description: '주문 ID', type: Number, nullable: false })
+@ApiProperty({ description: '주문 ID', type: String, nullable: false })
 @ApiProperty({ nullable: true, type: String })
 @ApiProperty({ nullable: true, type: Date })
 ```
@@ -376,11 +376,10 @@ export default class OrderRepository { ... }
 
 ```typescript
 export class GetOrderRequestParam {
-  @ApiProperty({ minimum: 1 })
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  public readonly orderId: number
+  @ApiProperty({ minLength: 1 })
+  @IsString()
+  @MinLength(1)
+  public readonly orderId: string
 }
 
 export class CreateOrderRequestBody {
@@ -633,8 +632,8 @@ Domain 레이어 단위 테스트는 프레임워크 없이 순수 TypeScript로
 describe('Order', () => {
   it('주문 항목이 비어있으면 생성 시 에러를 throw한다', () => {
     expect(() => new Order({
-      orderId: 1,
-      userId: 1,
+      orderId: 'order-1',
+      userId: 'user-1',
       items: [],
       status: 'pending'
     })).toThrow('주문 항목은 최소 1개 이상이어야 합니다.')
@@ -642,8 +641,8 @@ describe('Order', () => {
 
   it('이미 취소된 주문을 다시 취소하면 에러를 throw한다', () => {
     const order = new Order({
-      orderId: 1,
-      userId: 1,
+      orderId: 'order-1',
+      userId: 'user-1',
       items: [{ itemId: 1, quantity: 2 }],
       status: 'cancelled'
     })
@@ -652,8 +651,8 @@ describe('Order', () => {
 
   it('주문 취소 시 OrderCancelled 이벤트가 발행된다', () => {
     const order = new Order({
-      orderId: 1,
-      userId: 1,
+      orderId: 'order-1',
+      userId: 'user-1',
       items: [{ itemId: 1, quantity: 2 }],
       status: 'pending'
     })
