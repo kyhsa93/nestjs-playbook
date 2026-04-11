@@ -825,7 +825,12 @@ import { StorageService } from '@/order/application/service/storage-service'
 
 @Injectable()
 export class StorageServiceImpl extends StorageService {
-  private readonly s3 = new S3Client({})
+  private readonly s3 = new S3Client({
+    ...(process.env.AWS_ENDPOINT ? {
+      endpoint: process.env.AWS_ENDPOINT,
+      forcePathStyle: true
+    } : {})
+  })
   private readonly bucket = process.env.S3_BUCKET!
 
   public async generateUploadUrl(key: string): Promise<string> {
@@ -2736,7 +2741,122 @@ bootstrap()
 
 ---
 
-## 16. 핵심 설계 원칙 요약
+## 16. 로컬 개발 환경 — Docker Compose + LocalStack
+
+로컬 개발 시 외부 인프라(DB, S3 등)를 **Docker Compose**로 실행하고, AWS 서비스는 **LocalStack**으로 대체한다.
+
+### 디렉토리 구조
+
+```
+project-root/
+  docker-compose.yml                 ← 로컬 인프라 정의
+  localstack/
+    init-aws.sh                      ← LocalStack 초기화 스크립트 (S3 버킷 생성 등)
+  .env.development                   ← 로컬 개발용 환경 변수
+```
+
+### docker-compose.yml
+
+```yaml
+version: '3.8'
+
+services:
+  database:
+    image: postgres:16-alpine
+    ports:
+      - '5432:5432'
+    environment:
+      POSTGRES_USER: dev
+      POSTGRES_PASSWORD: dev
+      POSTGRES_DB: app
+    volumes:
+      - db-data:/var/lib/postgresql/data
+
+  localstack:
+    image: localstack/localstack
+    ports:
+      - '4566:4566'
+    environment:
+      SERVICES: s3
+      DEFAULT_REGION: ap-northeast-2
+    volumes:
+      - ./localstack:/etc/localstack/init/ready.d
+
+volumes:
+  db-data:
+```
+
+### LocalStack 초기화 스크립트
+
+```bash
+#!/bin/bash
+# localstack/init-aws.sh
+awslocal s3 mb s3://app-files
+```
+
+- `localstack/init-aws.sh`에 S3 버킷, SQS 큐 등 필요한 리소스를 생성한다.
+- `init/ready.d/`에 배치하면 LocalStack 기동 시 자동 실행된다.
+- 실행 권한 필요: `chmod +x localstack/init-aws.sh`
+
+### .env.development
+
+```env
+# Database
+DB_HOST=localhost
+DB_PORT=5432
+DB_USERNAME=dev
+DB_PASSWORD=dev
+DB_DATABASE=app
+
+# AWS (LocalStack)
+AWS_ENDPOINT=http://localhost:4566
+AWS_REGION=ap-northeast-2
+AWS_ACCESS_KEY_ID=test
+AWS_SECRET_ACCESS_KEY=test
+S3_BUCKET=app-files
+
+# App
+PORT=3000
+NODE_ENV=development
+```
+
+### AWS SDK에서 LocalStack 연동
+
+`AWS_ENDPOINT` 환경 변수가 설정되면 해당 엔드포인트로 연결한다. 운영 환경에서는 이 변수를 설정하지 않으면 기본 AWS 엔드포인트를 사용한다.
+
+```typescript
+// S3Client 예시 — StorageService 구현체에 이미 적용됨
+private readonly s3 = new S3Client({
+  ...(process.env.AWS_ENDPOINT ? {
+    endpoint: process.env.AWS_ENDPOINT,
+    forcePathStyle: true          // LocalStack은 path-style 필수
+  } : {})
+})
+```
+
+- `forcePathStyle: true`: LocalStack은 virtual-hosted-style(`bucket.localhost`)을 지원하지 않으므로 path-style(`localhost:4566/bucket`)을 사용한다.
+- 운영 환경에서는 `AWS_ENDPOINT`가 없으므로 기본 AWS 엔드포인트가 사용된다.
+
+### 실행 방법
+
+```bash
+# 1. 인프라 기동
+docker compose up -d
+
+# 2. 앱 실행
+npm run start:dev
+```
+
+### 원칙
+
+- **로컬 개발 시 외부 서비스에 직접 연결하지 않는다**: DB는 Docker Compose, AWS 서비스는 LocalStack을 사용한다.
+- **환경 변수로 엔드포인트를 분기한다**: `AWS_ENDPOINT`가 있으면 LocalStack, 없으면 실제 AWS.
+- **초기화 스크립트는 프로젝트에 포함한다**: `localstack/init-aws.sh`를 커밋하여 모든 개발자가 같은 환경을 재현할 수 있도록 한다.
+- **docker-compose.yml은 개발 전용이다**: 운영 인프라는 별도로 관리한다.
+
+---
+
+## 17. 핵심 설계 원칙 요약
 
 1. **도메인 우선 디렉토리 구조** — `src/<domain>/` 하위에 domain/application/interface/infrastructure 4개 레이어 배치
 2. **Domain 레이어는 프레임워크 무의존** — 순수 TypeScript. NestJS 데코레이터(@Injectable 등) 사용 금지
