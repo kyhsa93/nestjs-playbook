@@ -302,7 +302,10 @@
 
 ```
 [ ] Controller 클래스에 @ApiTags()가 있는가?
-[ ] 인증이 필요한 Controller에 @ApiBearerAuth('token')이 있는가?
+[ ] 인증이 필요한 Controller에 @UseGuards(AuthGuard) + @ApiBearerAuth('token')이 클래스 레벨에 적용되어 있는가?
+[ ] 인증이 불필요한 Controller(예: AuthController)에 AuthGuard가 적용되어 있지 않은가?
+[ ] AuthGuard가 Authorization 헤더에서 Bearer 토큰을 추출하고, AuthService.verify()로 검증하는가?
+[ ] 인증 성공 시 request.user에 사용자 정보가 할당되는가?
 [ ] Guard/Interceptor가 메서드 레벨이 아닌 클래스 레벨에 적용되어 있는가?
 [ ] Controller 클래스에 private readonly logger = new Logger(XxxController.name)가 있는가?
 ```
