@@ -1,6 +1,6 @@
 # 개발 프로세스 — 에이전트 역할 기반
 
-이 문서는 도메인 주도 설계 기반 NestJS 프로젝트를 **7개의 독립 에이전트 역할**로 분리하여 진행하는 프로세스를 정의한다.
+이 문서는 도메인 주도 설계 기반 NestJS 프로젝트를 **8개의 독립 에이전트 역할**로 분리하여 진행하는 프로세스를 정의한다.
 각 에이전트는 명확한 입력과 출력을 가지며, 입력이 주어지면 독립적으로 수행할 수 있다.
 
 ### 공통 진행 규칙
@@ -16,21 +16,22 @@
 ## 에이전트 구성
 
 ```
-                 Orchestrator Agent
-    (전체 흐름 조율 / 산출물 전달 / 품질 게이트)
-      │      │      │      │      │      │
-      ▼      ▼      ▼      ▼      ▼      ▼
-    [RA]   [SD]   [DM]   [TD]   [IM]   [VA]
+                   Orchestrator Agent
+      (전체 흐름 조율 / 산출물 전달 / 품질 게이트)
+      │      │      │      │      │      │      │
+      ▼      ▼      ▼      ▼      ▼      ▼      ▼
+    [RA]   [SD]   [DM]   [TD]   [TE]   [IM]   [VA]
 
 RA = Requirements Analyst    SD = Strategic Designer
 DM = Domain Modeler          TD = Tactical Designer
-IM = Implementer             VA = Validator
+TE = Test Engineer            IM = Implementer
+VA = Validator
 ```
 
 ### 산출물 흐름
 
 ```
-사용자 요구 ──▶ [RA] ──요구사항 명세──▶ [SD] ──전략 설계서──▶ [DM] ──도메인 모델──▶ [TD] ──전술 설계서──▶ [IM] ──구현 코드──▶ [VA] ──검증 보고서
+사용자 요구 ──▶ [RA] ──요구사항 명세──▶ [SD] ──전략 설계서──▶ [DM] ──도메인 모델──▶ [TD] ──전술 설계서──▶ [TE] ──테스트 코드──▶ [IM] ──구현 코드──▶ [VA] ──검증 보고서
 ```
 
 ### 작업 유형별 워크플로우
@@ -39,9 +40,9 @@ IM = Implementer             VA = Validator
 
 | 작업 유형 | 워크플로우 | 판단 기준 |
 |-----------|-----------|----------|
-| 신규 도메인 개발 | RA → SD → DM → TD → **(사용자 확인)** → IM → VA | 새로운 도메인/기능을 처음부터 만드는 경우 |
-| 기존 도메인 리팩토링 | DM → TD → **(사용자 확인)** → IM → VA | 기존 코드를 DDD 구조로 전환하거나 아키텍처를 변경하는 경우 |
-| 버그 수정 / 소규모 변경 | IM → VA | 버그 수정, 필드 추가, 설정 변경 등 설계 변경이 없는 경우 |
+| 신규 도메인 개발 | RA → SD → DM → TD → **(사용자 확인)** → TE → IM → VA | 새로운 도메인/기능을 처음부터 만드는 경우 |
+| 기존 도메인 리팩토링 | DM → TD → **(사용자 확인)** → TE → IM → VA | 기존 코드를 DDD 구조로 전환하거나 아키텍처를 변경하는 경우 |
+| 버그 수정 / 소규모 변경 | TE → IM → VA | 버그 수정, 필드 추가, 설정 변경 등 설계 변경이 없는 경우 |
 
 **하드 게이트 규칙**:
 
@@ -584,7 +585,197 @@ IM = Implementer             VA = Validator
 
 ---
 
-## Agent 5: Implementer (구현자)
+## Agent 5: Test Engineer (테스트 설계자)
+
+### 역할
+
+설계 산출물과 요구사항을 기반으로 **구현 전에 테스트 코드를 먼저 작성**하는 에이전트. 테스트가 실패하는 상태에서 Implementer에게 넘기고, Implementer가 테스트를 통과시키는 구현을 수행한다 (Test-First 방식).
+
+**테스트 작성 시 [conventions.md](conventions.md)의 테스트 패턴을 반드시 따른다.**
+
+### 입력
+
+- **Agent 1 산출물**: 유스케이스 목록 (수용 기준 포함)
+- **Agent 3 산출물**: Aggregate별 도메인 모델, 비즈니스 규칙/불변식 명세, Domain Event 목록
+- **Agent 4 산출물**: Aggregate 설계서, Repository 인터페이스 정의서, Application Service 정의서
+
+### 출력
+
+- 테스트 코드 (단위/통합/E2E — 모두 실패 상태)
+- 테스트 목록 문서 (테스트명, 검증 대상, 기대 결과)
+
+### 수행 절차
+
+#### 5.1 테스트 계획 수립
+
+요구사항의 수용 기준(Acceptance Criteria)과 도메인 모델의 불변식을 기반으로 테스트 목록을 작성한다.
+
+```
+| 테스트명 | 유형 | 검증 대상 | 기대 결과 |
+|---------|------|----------|----------|
+| createOrder_whenItemsEmpty_thenThrow | 단위 | Order 불변식 | 예외 발생 |
+| cancelOrder_whenAlreadyCancelled_thenThrow | 단위 | Order.cancel() | 예외 발생 |
+| cancelOrder_thenOrderCancelledEventCollected | 단위 | Domain Event 수집 | 이벤트 존재 |
+| getOrders_thenReturnPagedResult | 통합 | OrderQueryImpl | 페이지네이션 결과 |
+| POST /orders → 201 | E2E | 주문 생성 API | 201 Created |
+| POST /orders/:id/cancel → 204 | E2E | 주문 취소 API | 204 No Content |
+```
+
+사용자에게 테스트 목록을 보여주고 빠진 케이스가 없는지 확인한다.
+
+#### 5.2 단위 테스트 작성 — Domain 레이어
+
+Aggregate, Value Object, Domain Event에 대한 테스트를 작성한다. **프레임워크 없이 순수 TypeScript**로 작성한다.
+
+- Aggregate 생성 시 불변식 검증 (잘못된 입력 → 예외)
+- 상태 변경 메서드의 비즈니스 규칙 (조건 충족/미충족)
+- Value Object의 동등성 비교
+- Domain Event 수집 여부
+
+```typescript
+// order/domain/order.spec.ts
+describe('Order', () => {
+  it('createOrder_whenItemsEmpty_thenThrow', () => {
+    expect(() => new Order({
+      userId: 'user-1',
+      items: [],
+      status: 'pending'
+    })).toThrow('주문 항목은 최소 1개 이상이어야 합니다.')
+  })
+
+  it('cancelOrder_whenAlreadyCancelled_thenThrow', () => {
+    const order = createTestOrder({ status: 'cancelled' })
+    expect(() => order.cancel('변심')).toThrow('이미 취소된 주문입니다.')
+  })
+
+  it('cancelOrder_thenOrderCancelledEventCollected', () => {
+    const order = createTestOrder({ status: 'pending' })
+    order.cancel('변심')
+    expect(order.domainEvents).toHaveLength(1)
+    expect(order.domainEvents[0]).toBeInstanceOf(OrderCancelled)
+  })
+})
+```
+
+#### 5.3 단위 테스트 작성 — Application 레이어
+
+Command Service의 유스케이스 흐름을 테스트한다. Repository와 TransactionManager를 **mock**으로 대체한다.
+
+```typescript
+// order/application/command/order-command-service.spec.ts
+describe('OrderCommandService', () => {
+  let service: OrderCommandService
+  let orderRepository: jest.Mocked<OrderRepository>
+
+  beforeEach(async () => {
+    const module = await Test.createTestingModule({
+      providers: [
+        OrderCommandService,
+        {
+          provide: OrderRepository,
+          useValue: { findOrders: jest.fn(), saveOrder: jest.fn(), deleteOrder: jest.fn() }
+        },
+        {
+          provide: TransactionManager,
+          useValue: { run: jest.fn((fn) => fn()), getManager: jest.fn() }
+        }
+      ]
+    }).compile()
+    service = module.get(OrderCommandService)
+    orderRepository = module.get(OrderRepository)
+  })
+
+  it('cancelOrder_whenOrderNotFound_thenThrow', async () => {
+    orderRepository.findOrders.mockResolvedValue({ orders: [], count: 0 })
+    await expect(service.cancelOrder({ orderId: 'non-existent', reason: '변심' }))
+      .rejects.toThrow('주문을 찾을 수 없습니다.')
+  })
+})
+```
+
+#### 5.4 통합 테스트 작성
+
+Repository 구현체, Query 구현체의 실제 DB 연동을 테스트한다. **SQLite in-memory DB**를 사용한다.
+
+```typescript
+// order/infrastructure/order-query-impl.spec.ts
+describe('OrderQueryImpl (integration)', () => {
+  let queryImpl: OrderQueryImpl
+  let dataSource: DataSource
+
+  beforeAll(async () => {
+    // SQLite in-memory DB로 테스트 환경 구성
+    const module = await Test.createTestingModule({
+      imports: [TestDatabaseModule, TypeOrmModule.forFeature([OrderEntity, OrderItemEntity])],
+      providers: [OrderQueryImpl]
+    }).compile()
+    queryImpl = module.get(OrderQueryImpl)
+    dataSource = module.get(DataSource)
+  })
+
+  it('getOrders_thenReturnPagedResult', async () => {
+    // 테스트 데이터 삽입 후 조회 결과 검증
+  })
+
+  afterAll(() => dataSource.destroy())
+})
+```
+
+#### 5.5 E2E 테스트 작성
+
+유스케이스의 전체 흐름(HTTP 요청 → 응답)을 검증한다.
+
+```typescript
+// test/order.e2e-spec.ts
+describe('Order API (e2e)', () => {
+  let app: INestApplication
+
+  beforeAll(async () => {
+    const module = await Test.createTestingModule({
+      imports: [TestDatabaseModule, OrderModule]
+    }).compile()
+    app = module.createNestApplication()
+    app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }))
+    await app.init()
+  })
+
+  it('POST /orders → 201 Created', () => {
+    return request(app.getHttpServer())
+      .post('/orders')
+      .send({ userId: 'user-1', items: [{ itemId: 1, name: '상품', price: 10000, quantity: 1 }] })
+      .expect(201)
+  })
+
+  it('POST /orders/:id/cancel → 204 No Content', async () => {
+    // 주문 생성 후 취소
+  })
+
+  afterAll(() => app.close())
+})
+```
+
+#### 5.6 테스트 실행 확인
+
+모든 테스트가 **실패하는 상태**인지 확인한다. 구현 코드가 없으므로 테스트가 실패해야 정상이다.
+
+- 단위 테스트: Aggregate/Service 클래스가 없으므로 컴파일 에러 또는 런타임 에러
+- 통합 테스트: Repository 구현체가 없으므로 실패
+- E2E 테스트: Controller/Module이 없으므로 실패
+
+**이 시점에서 테스트 목록과 코드를 사용자에게 확인받는다.**
+
+#### 5.7 산출물 작성
+
+아래 산출물을 마크다운 문서로 정리하고 사용자에게 확인을 요청한다:
+
+- 테스트 목록 (테스트명, 유형, 검증 대상, 기대 결과)
+- 테스트 코드 파일 목록
+
+---
+
+## Agent 6: Implementer (구현자)
+
+> **Test Engineer가 작성한 테스트를 통과시키는 것이 목표이다.** 테스트가 모두 통과하면 해당 슬라이스의 구현이 완료된 것이다.
 
 ### 역할
 
@@ -597,11 +788,12 @@ IM = Implementer             VA = Validator
 - **Agent 1 산출물**: 유스케이스 목록 (우선순위), 제약 조건 정리표
 - **Agent 3 산출물**: 유비쿼터스 언어 용어 사전 (Glossary)
 - **Agent 4 산출물**: Aggregate 설계서, Repository 인터페이스 정의서, Application Service 정의서, Event 흐름도
+- **Agent 5 산출물**: 테스트 코드 (모두 실패 상태)
 
 ### 출력
 
 - 프로젝트 구조 및 아키텍처 가이드 (패키지 구성, 레이어 간 의존 규칙)
-- 구현된 소스 코드 (레이어별)
+- 구현된 소스 코드 (레이어별) — **모든 테스트가 통과하는 상태**
 - API 명세서 (엔드포인트, 요청/응답 스키마, 에러 코드)
 - DB 스키마 정의서
 - 인프라 연동 명세서 (메시지 큐 토픽, 외부 API 연동 정보)
@@ -771,11 +963,11 @@ CREATE TABLE {table_name} (
 
 ---
 
-## Agent 6: Validator (검증자)
+## Agent 7: Validator (검증자)
 
 ### 역할
 
-구현된 코드가 도메인 모델과 요구사항에 부합하는지 검증하고, 개선점을 식별하는 에이전트.
+구현된 코드가 도메인 모델과 요구사항에 부합하는지 검증하고, 개선점을 식별하는 에이전트. **테스트 코드는 Test Engineer(Agent 5)가 이미 작성했으므로, Validator는 테스트 통과 여부 확인과 코드 품질 검증에 집중한다.**
 
 **검증 시 [checklist.md](checklist.md)의 자기 검토 체크리스트를 함께 수행한다.**
 
@@ -783,48 +975,28 @@ CREATE TABLE {table_name} (
 
 - **Agent 1 산출물**: 유스케이스 목록 (수용 기준 포함)
 - **Agent 3 산출물**: Aggregate별 도메인 모델, 비즈니스 규칙/불변식 명세, 유비쿼터스 언어 용어 사전
-- **Agent 5 산출물**: 구현된 소스 코드
+- **Agent 5 산출물**: 테스트 코드
+- **Agent 6 산출물**: 구현된 소스 코드
 
 ### 출력
 
-- 테스트 목록 및 결과 (테스트명, 검증 항목, 통과 여부)
+- 테스트 실행 결과 (전체 통과 여부, 실패 항목)
 - 도메인 모델 검증 체크리스트 결과
 - 변경 이력 (변경 대상, 변경 사유, 변경 내용)
 - 최신화된 산출물 목록 (어떤 산출물이 업데이트되었는지)
 
 ### 수행 절차
 
-#### 6.1 테스트
+#### 7.1 테스트 실행 및 결과 확인
 
-아래 수준의 테스트 코드를 생성한다:
+Test Engineer가 작성한 모든 테스트를 실행하고 결과를 확인한다.
 
-**단위 테스트** (Aggregate, Value Object 중심):
+- 모든 테스트가 통과하는지 확인
+- 실패하는 테스트가 있으면 원인을 분석하고 Implementer에게 수정을 요청
+- 테스트 커버리지가 수용 기준을 충족하는지 확인
+- 누락된 테스트 케이스가 있으면 Test Engineer에게 추가를 요청
 
-- Aggregate 생성 시 불변식 검증 테스트
-- 상태 변경 메서드의 비즈니스 규칙 테스트
-- 잘못된 입력에 대한 예외 발생 테스트
-- Value Object의 동등성 비교 테스트
-- Domain Event 발행 여부 테스트
-
-**통합 테스트** (Repository, Event 중심):
-
-- Repository 구현체를 통한 Aggregate 저장/조회 테스트
-- 이벤트 발행 → 구독 → 처리 흐름 테스트
-- 외부 시스템 어댑터 연동 테스트
-
-**E2E 테스트** (유스케이스 흐름):
-
-- 유스케이스의 Happy Path를 E2E로 검증
-- 예외 흐름의 처리가 올바른지 검증
-
-각 테스트는 아래 패턴을 따른다:
-
-```
-테스트명: {도메인 행위}_when_{조건}_then_{기대 결과}
-예: placeOrder_whenStockInsufficient_thenThrowsOutOfStockException
-```
-
-#### 6.2 도메인 모델 검증
+#### 7.2 도메인 모델 검증
 
 아래 체크리스트로 구현된 코드와 도메인 모델 산출물의 일치 여부를 검증한다:
 
@@ -838,7 +1010,7 @@ CREATE TABLE {table_name} (
 
 불일치가 발견되면 사용자에게 보고하고, 코드 수정 또는 모델 수정 중 어떤 방향이 적절한지 합의한다.
 
-#### 6.3 리팩터링 및 경계 재조정
+#### 7.3 리팩터링 및 경계 재조정
 
 검증 과정에서 아래 문제가 발견되면 사용자에게 개선안을 제안한다:
 
@@ -849,11 +1021,11 @@ CREATE TABLE {table_name} (
 
 변경 사항이 있으면 영향받는 이전 단계 산출물도 함께 업데이트한다.
 
-#### 6.4 산출물 작성
+#### 7.4 산출물 작성
 
 아래 산출물을 마크다운 문서로 정리하고 사용자에게 확인을 요청한다:
 
-- 테스트 목록 및 결과 (테스트명, 검증 항목, 통과 여부)
+- 테스트 실행 결과 (전체 통과 여부, 실패 항목과 원인)
 - 도메인 모델 검증 체크리스트 결과
 - 변경 이력 (변경 대상, 변경 사유, 변경 내용)
 - 최신화된 산출물 목록 (어떤 산출물이 업데이트되었는지)
