@@ -147,15 +147,13 @@ Application Service는 **Command Service**와 **Query Service**로 분리한다.
 
 1. Repository에서 Aggregate 조회
 2. Aggregate의 도메인 메서드 호출 (비즈니스 로직은 Aggregate에 위임)
-3. Repository로 Aggregate 저장
-4. Domain Event 발행
-5. 트랜잭션 관리
+3. Repository로 Aggregate 저장 (Repository 내부에서 Aggregate + outbox를 같은 트랜잭션으로 저장)
+4. 트랜잭션 관리
 
 ```typescript
 // application/command/order-command-service.ts
 import { Injectable } from '@nestjs/common'
 
-import { OutboxWriter } from '@/outbox/outbox-writer'
 import { TransactionManager } from '@/database/transaction-manager'
 import { CancelOrderCommand } from '@/order/application/command/cancel-order-command'
 import { OrderRepository } from '@/order/domain/order-repository'
@@ -167,27 +165,22 @@ export class OrderCommandService {
   constructor(
     private readonly orderRepository: OrderRepository,
     private readonly paymentRepository: PaymentRepository,
-    private readonly transactionManager: TransactionManager,
-    private readonly outboxWriter: OutboxWriter
+    private readonly transactionManager: TransactionManager
   ) {}
 
   public async cancelOrder(command: CancelOrderCommand): Promise<void> {
-    // 1. Aggregate 조회
     const order = await this.orderRepository
       .findOrders({ orderId: command.orderId, take: 1, page: 0 })
       .then((r) => r.orders.pop())
     if (!order) throw new Error(ErrorMessage['주문을 찾을 수 없습니다.'])
 
-    // 2. 도메인 메서드 호출 (Aggregate 내부에서 이벤트 수집)
     order.cancel(command.reason)
 
-    // 3. Aggregate 저장 + 이벤트 outbox 저장을 같은 트랜잭션으로
+    // Repository.saveOrder() 내부에서 Aggregate + outbox를 함께 저장
     await this.transactionManager.run(async () => {
       await this.paymentRepository.deletePaymentMethods(order.orderId)
       await this.orderRepository.saveOrder(order)
-      await this.outboxWriter.saveAll(order.domainEvents)
     })
-    order.clearEvents()
   }
 }
 ```
@@ -1094,37 +1087,35 @@ export class HttpExceptionFilter implements ExceptionFilter {
 
 ---
 
-## 6. 도메인 이벤트 발행 패턴 — Transactional Outbox
+## 6. 도메인 이벤트 발행 패턴 — Transactional Outbox + SQS
 
-### 문제
-
-도메인 메서드 실행 후 이벤트를 발행할 때, Aggregate 저장과 이벤트 발행이 원자적이지 않으면 다음 문제가 발생한다:
-
-- 트랜잭션 커밋 후 서버가 죽으면 → 이벤트 유실
-- 이벤트 발행 후 트랜잭션이 롤백되면 → 잘못된 이벤트 발행
-
-### 해결 — Transactional Outbox 패턴
-
-Aggregate 저장과 이벤트 저장을 **같은 트랜잭션**으로 묶는다. 별도 프로세스가 outbox 테이블에서 이벤트를 읽어 발행한다.
+### 전체 흐름
 
 ```
-[Command 실행 — 하나의 트랜잭션]
-1. Command Service: Aggregate 조회
-2. Command Service: Aggregate 도메인 메서드 호출 → Aggregate 내부에 이벤트 수집
-3. Command Service: transactionManager.run() 안에서:
-   - Repository로 Aggregate 저장
-   - Outbox 테이블에 수집된 이벤트 저장
-4. 트랜잭션 커밋 → Aggregate와 이벤트가 함께 확정되거나 함께 롤백됨
+[1. 도메인 로직 실행]
+  Command Service → Aggregate 도메인 메서드 호출 → Aggregate 내부에 이벤트 객체 수집
 
-[이벤트 발행 — 별도 프로세스]
-5. OutboxProcessor: outbox 테이블에서 미발행 이벤트를 폴링
-6. OutboxProcessor: 이벤트를 EventHandler에 전달
-7. OutboxProcessor: 발행 완료된 이벤트를 processed 처리
+[2. 저장 — 하나의 트랜잭션]
+  Repository.save(aggregate) 내부에서:
+    - Aggregate 상태 저장
+    - aggregate.domainEvents를 outbox 테이블에 저장
+    - aggregate.clearEvents()
+  트랜잭션 커밋 → Aggregate와 이벤트가 함께 확정되거나 함께 롤백
+
+[3. Outbox → SQS 전송]
+  OutboxRelay: outbox 테이블을 짧은 주기로 폴링
+    → 미전송 이벤트를 SQS 큐로 전송
+    → 전송 완료된 이벤트를 processed 처리
+
+[4. SQS → EventHandler 수신]
+  EventConsumer: SQS 큐에서 메시지를 수신 (폴링)
+    → eventType에 따라 해당 EventHandler 호출
+    → 후속 처리 실행 (알림, 다른 도메인 호출 등)
 ```
 
-### Aggregate에서 이벤트 수집
+### 1단계: Aggregate에서 이벤트 수집
 
-Aggregate는 도메인 메서드 내에서 `_events` 배열에 이벤트를 추가한다.
+Aggregate의 도메인 메서드가 상태를 변경할 때 내부 `_events` 배열에 이벤트 객체를 추가한다.
 
 ```typescript
 // domain/order.ts
@@ -1136,10 +1127,62 @@ export class Order {
   public cancel(reason: string): void {
     if (this._status === 'cancelled') throw new Error(...)
     this._status = 'cancelled'
+    // 도메인 메서드 내부에서 이벤트 객체 생성
     this._events.push(new OrderCancelled({ orderId: this.orderId, reason, cancelledAt: new Date() }))
   }
 
   public clearEvents(): void { this._events.length = 0 }
+}
+```
+
+### 2단계: Repository에서 Aggregate + Outbox를 트랜잭션으로 저장
+
+**Repository 구현체의 save 메서드** 안에서 Aggregate 저장과 outbox 저장을 하나의 트랜잭션으로 묶는다. Command Service는 outbox를 직접 다루지 않는다.
+
+```typescript
+// infrastructure/order-repository-impl.ts
+@Injectable()
+export class OrderRepositoryImpl extends OrderRepository {
+  constructor(
+    @InjectRepository(OrderEntity) private readonly orderRepo: Repository<OrderEntity>,
+    private readonly transactionManager: TransactionManager,
+    private readonly outboxWriter: OutboxWriter
+  ) {
+    super()
+  }
+
+  public async saveOrder(order: Order): Promise<void> {
+    const manager = this.transactionManager.getManager()
+    // Aggregate 저장 + 이벤트 outbox 저장이 같은 트랜잭션
+    await manager.save(OrderEntity, {
+      orderId: order.orderId,
+      userId: order.userId,
+      status: order.status,
+      items: order.items.map((i) => ({ ... }))
+    })
+    // 도메인 이벤트가 있으면 outbox에 저장
+    if (order.domainEvents.length > 0) {
+      await this.outboxWriter.saveAll(order.domainEvents)
+      order.clearEvents()
+    }
+  }
+}
+```
+
+Command Service는 Repository.save()만 호출하면 된다:
+
+```typescript
+// application/command/order-command-service.ts
+public async cancelOrder(command: CancelOrderCommand): Promise<void> {
+  const order = await this.orderRepository.findOrders({ ... }).then((r) => r.orders.pop())
+  if (!order) throw new Error(...)
+
+  order.cancel(command.reason)                   // 도메인 메서드 → 이벤트 수집
+
+  await this.transactionManager.run(async () => {
+    await this.paymentRepository.deletePaymentMethods(order.orderId)
+    await this.orderRepository.saveOrder(order)  // Aggregate + outbox 함께 저장
+  })
 }
 ```
 
@@ -1167,9 +1210,9 @@ export class OutboxEntity extends BaseEntity {
 }
 ```
 
-### OutboxWriter (infrastructure 레이어)
+### OutboxWriter
 
-트랜잭션 안에서 이벤트를 outbox 테이블에 저장한다.
+트랜잭션 안에서 이벤트를 outbox 테이블에 저장한다. Repository 구현체에서 호출된다.
 
 ```typescript
 // outbox/outbox-writer.ts
@@ -1198,30 +1241,31 @@ export class OutboxWriter {
 }
 ```
 
-### OutboxProcessor (infrastructure 레이어)
+### 3단계: OutboxRelay — Outbox → SQS 전송
 
-미발행 이벤트를 폴링하여 EventHandler에 전달한다.
+outbox 테이블에서 미전송 이벤트를 짧은 주기로 폴링하여 SQS 큐로 전송한다.
 
 ```typescript
-// outbox/outbox-processor.ts
+// outbox/outbox-relay.ts
 import { Injectable, Logger } from '@nestjs/common'
 import { Cron } from '@nestjs/schedule'
+import { SendMessageCommand, SQSClient } from '@aws-sdk/client-sqs'
 import { DataSource } from 'typeorm'
 
-import { DomainEventPublisher } from '@/outbox/domain-event-publisher'
 import { OutboxEntity } from '@/outbox/outbox.entity'
 
 @Injectable()
-export class OutboxProcessor {
-  private readonly logger = new Logger(OutboxProcessor.name)
+export class OutboxRelay {
+  private readonly logger = new Logger(OutboxRelay.name)
+  private readonly sqs = new SQSClient({
+    ...(process.env.AWS_ENDPOINT ? { endpoint: process.env.AWS_ENDPOINT } : {})
+  })
+  private readonly queueUrl = process.env.SQS_DOMAIN_EVENT_QUEUE_URL!
 
-  constructor(
-    private readonly dataSource: DataSource,
-    private readonly eventPublisher: DomainEventPublisher
-  ) {}
+  constructor(private readonly dataSource: DataSource) {}
 
-  @Cron('*/5 * * * * *')
-  public async process(): Promise<void> {
+  @Cron('*/3 * * * * *')  // 3초마다 폴링
+  public async relay(): Promise<void> {
     const repo = this.dataSource.getRepository(OutboxEntity)
     const events = await repo.find({
       where: { processed: false },
@@ -1231,127 +1275,140 @@ export class OutboxProcessor {
 
     for (const event of events) {
       try {
-        await this.eventPublisher.publish(event.eventType, JSON.parse(event.payload))
+        await this.sqs.send(new SendMessageCommand({
+          QueueUrl: this.queueUrl,
+          MessageBody: JSON.stringify({
+            eventId: event.eventId,
+            eventType: event.eventType,
+            payload: event.payload
+          })
+        }))
         await repo.update({ eventId: event.eventId }, { processed: true })
       } catch (error) {
-        this.logger.error({ message: '이벤트 발행 실패', event_id: event.eventId, error })
+        this.logger.error({ message: 'SQS 전송 실패', event_id: event.eventId, error })
+      }
+    }
+  }
+
+  @Cron('0 3 * * *')  // 매일 03:00 — 처리 완료된 이벤트 정리
+  public async cleanup(): Promise<void> {
+    const repo = this.dataSource.getRepository(OutboxEntity)
+    const threshold = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+    await repo.delete({ processed: true, createdAt: LessThan(threshold) })
+  }
+}
+```
+
+### 4단계: EventConsumer — SQS → EventHandler 수신
+
+SQS 큐에서 메시지를 폴링하여 eventType에 따라 핸들러를 호출한다.
+
+```typescript
+// outbox/event-consumer.ts
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common'
+import { DeleteMessageCommand, ReceiveMessageCommand, SQSClient } from '@aws-sdk/client-sqs'
+
+import { EventHandlerRegistry } from '@/outbox/event-handler-registry'
+
+@Injectable()
+export class EventConsumer implements OnModuleInit {
+  private readonly logger = new Logger(EventConsumer.name)
+  private readonly sqs = new SQSClient({
+    ...(process.env.AWS_ENDPOINT ? { endpoint: process.env.AWS_ENDPOINT } : {})
+  })
+  private readonly queueUrl = process.env.SQS_DOMAIN_EVENT_QUEUE_URL!
+  private running = true
+
+  constructor(private readonly handlerRegistry: EventHandlerRegistry) {}
+
+  onModuleInit(): void {
+    this.poll()
+  }
+
+  private async poll(): Promise<void> {
+    while (this.running) {
+      try {
+        const result = await this.sqs.send(new ReceiveMessageCommand({
+          QueueUrl: this.queueUrl,
+          MaxNumberOfMessages: 10,
+          WaitTimeSeconds: 5   // long polling
+        }))
+
+        for (const message of result.Messages ?? []) {
+          try {
+            const { eventType, payload } = JSON.parse(message.Body ?? '{}')
+            await this.handlerRegistry.handle(eventType, JSON.parse(payload))
+            await this.sqs.send(new DeleteMessageCommand({
+              QueueUrl: this.queueUrl,
+              ReceiptHandle: message.ReceiptHandle!
+            }))
+          } catch (error) {
+            this.logger.error({ message: '이벤트 처리 실패', error })
+            // 삭제하지 않으면 visibility timeout 후 재수신됨
+          }
+        }
+      } catch (error) {
+        this.logger.error({ message: 'SQS 수신 실패', error })
+        await new Promise((resolve) => setTimeout(resolve, 3000))
       }
     }
   }
 }
 ```
 
-### DomainEventPublisher (infrastructure 레이어)
+### EventHandlerRegistry — 핸들러 라우팅
 
-outbox에서 읽은 이벤트를 핸들러에 전달한다. 프로젝트의 이벤트 시스템에 따라 구현이 달라진다.
-
-#### 방식 A: @nestjs/event-emitter (Service 패턴)
+eventType 문자열을 핸들러에 매핑한다.
 
 ```typescript
-// outbox/domain-event-publisher.ts
+// outbox/event-handler-registry.ts
 import { Injectable } from '@nestjs/common'
-import { EventEmitter2 } from '@nestjs/event-emitter'
+import { ModuleRef } from '@nestjs/core'
 
-@Injectable()
-export class DomainEventPublisher {
-  constructor(private readonly eventEmitter: EventEmitter2) {}
+type HandlerEntry = { handlerClass: new (...args: any[]) => any; method: string }
 
-  public async publish(eventType: string, payload: object): Promise<void> {
-    await this.eventEmitter.emitAsync(eventType, payload)
+const HANDLER_MAP = new Map<string, HandlerEntry[]>()
+
+// 데코레이터 — EventHandler에서 사용
+export function HandleEvent(eventType: string): MethodDecorator {
+  return (target, propertyKey) => {
+    const entries = HANDLER_MAP.get(eventType) ?? []
+    entries.push({ handlerClass: target.constructor as any, method: propertyKey as string })
+    HANDLER_MAP.set(eventType, entries)
   }
 }
-```
-
-```typescript
-// application/event/order-cancelled-handler.ts
-import { Injectable } from '@nestjs/common'
-import { OnEvent } from '@nestjs/event-emitter'
 
 @Injectable()
-export class OrderCancelledHandler {
-  @OnEvent('OrderCancelled')
-  public async handle(event: { orderId: string; reason: string }): Promise<void> {
-    // 후속 처리
-  }
-}
-```
+export class EventHandlerRegistry {
+  constructor(private readonly moduleRef: ModuleRef) {}
 
-#### 방식 B: @nestjs/cqrs EventBus (CQRS 패턴)
-
-```typescript
-// outbox/domain-event-publisher.ts
-import { Injectable } from '@nestjs/common'
-import { EventBus } from '@nestjs/cqrs'
-
-// 이벤트 클래스 레지스트리 — eventType 문자열을 클래스로 매핑
-const EVENT_REGISTRY: Record<string, new (payload: any) => object> = {}
-
-export function RegisterEvent(eventClass: new (payload: any) => object): void {
-  EVENT_REGISTRY[eventClass.name] = eventClass
-}
-
-@Injectable()
-export class DomainEventPublisher {
-  constructor(private readonly eventBus: EventBus) {}
-
-  public async publish(eventType: string, payload: object): Promise<void> {
-    const EventClass = EVENT_REGISTRY[eventType]
-    if (EventClass) {
-      this.eventBus.publish(new EventClass(payload))
+  public async handle(eventType: string, payload: object): Promise<void> {
+    const entries = HANDLER_MAP.get(eventType) ?? []
+    for (const { handlerClass, method } of entries) {
+      const handler = this.moduleRef.get(handlerClass, { strict: false })
+      await handler[method](payload)
     }
   }
 }
 ```
 
-```typescript
-// domain/order-cancelled.ts — 이벤트 클래스 등록
-import { RegisterEvent } from '@/outbox/domain-event-publisher'
-
-export class OrderCancelled {
-  public readonly orderId: string
-  public readonly reason: string
-  public readonly cancelledAt: Date
-
-  constructor(params: { orderId: string; reason: string; cancelledAt: Date }) {
-    this.orderId = params.orderId
-    this.reason = params.reason
-    this.cancelledAt = params.cancelledAt
-  }
-}
-
-RegisterEvent(OrderCancelled)
-```
+### EventHandler — 도메인 이벤트 수신 및 처리
 
 ```typescript
 // application/event/order-cancelled-handler.ts
-import { EventsHandler, IEventHandler } from '@nestjs/cqrs'
+import { Injectable, Logger } from '@nestjs/common'
 
-import { OrderCancelled } from '@/order/domain/order-cancelled'
+import { HandleEvent } from '@/outbox/event-handler-registry'
 
-@EventsHandler(OrderCancelled)
-export class OrderCancelledHandler implements IEventHandler<OrderCancelled> {
-  public async handle(event: OrderCancelled): Promise<void> {
-    // 후속 처리
+@Injectable()
+export class OrderCancelledHandler {
+  private readonly logger = new Logger(OrderCancelledHandler.name)
+
+  @HandleEvent('OrderCancelled')
+  public async handle(event: { orderId: string; reason: string }): Promise<void> {
+    this.logger.log({ message: '주문 취소 이벤트 수신', order_id: event.orderId })
+    // 후속 처리: 환불 요청, 알림 발송, 재고 복원 등
   }
-}
-```
-
-### Command Service에서의 패턴
-
-Aggregate 저장과 이벤트 outbox 저장을 **같은 트랜잭션**에서 수행한다.
-
-```typescript
-public async cancelOrder(command: CancelOrderCommand): Promise<void> {
-  const order = await this.orderRepository.findOrders({ ... }).then((r) => r.orders.pop())
-  if (!order) throw new Error(...)
-
-  order.cancel(command.reason)                              // 도메인 메서드 → 이벤트 수집
-
-  await this.transactionManager.run(async () => {           // 하나의 트랜잭션
-    await this.orderRepository.saveOrder(order)             //   Aggregate 저장
-    await this.outboxWriter.saveAll(order.domainEvents)     //   이벤트를 outbox에 저장
-  })
-  order.clearEvents()
 }
 ```
 
@@ -1360,51 +1417,37 @@ public async cancelOrder(command: CancelOrderCommand): Promise<void> {
 ```
 src/
   outbox/
-    outbox-module.ts                 ← OutboxModule
+    outbox-module.ts                 ← OutboxModule (@Global)
     outbox.entity.ts                 ← Outbox 테이블 Entity
-    outbox-writer.ts                 ← 트랜잭션 안에서 이벤트 저장
-    outbox-processor.ts              ← 폴링으로 미발행 이벤트 발행
-    domain-event-publisher.ts        ← 이벤트를 핸들러에 전달
+    outbox-writer.ts                 ← 트랜잭션 안에서 이벤트 저장 (Repository에서 호출)
+    outbox-relay.ts                  ← Outbox → SQS 전송 (폴링)
+    event-consumer.ts                ← SQS → EventHandler 수신 (폴링)
+    event-handler-registry.ts        ← eventType → Handler 라우팅
   <domain>/
     domain/
       <domain-event>.ts              ← Domain Event 정의
     application/
       event/
-        <domain-event>-handler.ts    ← EventHandler (후속 처리)
+        <domain-event>-handler.ts    ← EventHandler (@HandleEvent 데코레이터)
 ```
 
 ### Module 등록
-
-```typescript
-// database/database-module.ts
-import { Global, Module } from '@nestjs/common'
-import { TypeOrmModule } from '@nestjs/typeorm'
-
-import { TransactionManager } from '@/database/transaction-manager'
-
-@Global()
-@Module({
-  imports: [TypeOrmModule.forRoot({ ... })],
-  providers: [TransactionManager],
-  exports: [TransactionManager]
-})
-export class DatabaseModule {}
-```
 
 ```typescript
 // outbox/outbox-module.ts
 import { Global, Module } from '@nestjs/common'
 import { TypeOrmModule } from '@nestjs/typeorm'
 
-import { DomainEventPublisher } from '@/outbox/domain-event-publisher'
+import { EventConsumer } from '@/outbox/event-consumer'
+import { EventHandlerRegistry } from '@/outbox/event-handler-registry'
 import { OutboxEntity } from '@/outbox/outbox.entity'
-import { OutboxProcessor } from '@/outbox/outbox-processor'
+import { OutboxRelay } from '@/outbox/outbox-relay'
 import { OutboxWriter } from '@/outbox/outbox-writer'
 
 @Global()
 @Module({
   imports: [TypeOrmModule.forFeature([OutboxEntity])],
-  providers: [OutboxWriter, OutboxProcessor, DomainEventPublisher],
+  providers: [OutboxWriter, OutboxRelay, EventConsumer, EventHandlerRegistry],
   exports: [OutboxWriter]
 })
 export class OutboxModule {}
@@ -1413,8 +1456,6 @@ export class OutboxModule {}
 ```typescript
 // app-module.ts
 import { ScheduleModule } from '@nestjs/schedule'
-import { EventEmitterModule } from '@nestjs/event-emitter'  // 방식 A
-// 또는 import { CqrsModule } from '@nestjs/cqrs'           // 방식 B
 
 import { DatabaseModule } from '@/database/database-module'
 import { OutboxModule } from '@/outbox/outbox-module'
@@ -1422,8 +1463,6 @@ import { OutboxModule } from '@/outbox/outbox-module'
 @Module({
   imports: [
     ScheduleModule.forRoot(),
-    EventEmitterModule.forRoot(),  // 방식 A
-    // CqrsModule,                 // 방식 B
     DatabaseModule,
     OutboxModule,
     // ...도메인 모듈
@@ -1431,7 +1470,7 @@ import { OutboxModule } from '@/outbox/outbox-module'
 })
 export class AppModule {}
 
-// order-module.ts — DatabaseModule, OutboxModule이 @Global()이므로 별도 import 불필요
+// order-module.ts
 @Module({
   imports: [TypeOrmModule.forFeature([OrderEntity, OrderItemEntity])],
   providers: [OrderCommandService, OrderCancelledHandler, ...]
@@ -1439,58 +1478,51 @@ export class AppModule {}
 export class OrderModule {}
 ```
 
-### 원칙
+### LocalStack + Docker Compose
 
-- **이벤트는 Aggregate 내부에서만 수집한다**: Command Service가 직접 이벤트를 생성하지 않는다.
-- **Aggregate 저장과 이벤트 저장은 같은 트랜잭션이다**: outbox에 함께 저장하여 원자성을 보장한다.
-- **이벤트 발행은 별도 프로세스(OutboxProcessor)가 담당한다**: Command Service는 발행을 신경쓰지 않는다.
-- **이벤트 핸들러는 application/event/에 배치한다**: 도메인 레이어가 아닌 application 레이어에서 후속 처리를 조율한다.
-- **도메인 메서드에 이벤트가 없는 경우**: `outboxWriter.saveAll()`과 `clearEvents()` 호출을 생략한다.
+```bash
+# localstack/init-aws.sh — SQS 큐 생성 추가
+awslocal sqs create-queue --queue-name domain-events
+```
+
+```env
+# .env.development — SQS 큐 URL 추가
+SQS_DOMAIN_EVENT_QUEUE_URL=http://localhost:4566/000000000000/domain-events
+```
 
 ### 이벤트 핸들러 멱등성
 
-OutboxProcessor가 이벤트 발행 후 `processed: true`로 업데이트하기 전에 실패하면, 같은 이벤트가 **재발행**될 수 있다. 따라서 모든 EventHandler는 **멱등(idempotent)** 하게 구현해야 한다.
+SQS는 at-least-once 전달을 보장한다. 같은 메시지가 **중복 수신**될 수 있으므로 모든 EventHandler는 **멱등(idempotent)** 하게 구현해야 한다.
 
 ```typescript
 // 올바른 방식 — 멱등한 핸들러
-@OnEvent('OrderCancelled')
+@HandleEvent('OrderCancelled')
 public async handle(event: { orderId: string }): Promise<void> {
-  // 이미 처리된 이벤트인지 확인 후 처리
   const refund = await this.refundRepository
     .findRefunds({ orderId: event.orderId, take: 1, page: 0 })
     .then((r) => r.refunds.pop())
-  if (refund) return  // 이미 환불 처리됨 — 중복 실행 방지
+  if (refund) return  // 이미 처리됨 — 중복 실행 방지
   await this.refundRepository.saveRefund(new Refund({ orderId: event.orderId, ... }))
 }
 
 // 잘못된 방식 — 멱등하지 않은 핸들러
-@OnEvent('OrderCancelled')
+@HandleEvent('OrderCancelled')
 public async handle(event: { orderId: string }): Promise<void> {
-  // 중복 체크 없이 바로 생성 — 재발행 시 환불이 두 번 생성됨
   await this.refundRepository.saveRefund(new Refund({ orderId: event.orderId, ... }))
 }
 ```
 
-**멱등성 보장 방법:**
-- 핸들러 시작 시 이미 처리된 상태인지 확인한 후 처리
-- 또는 DB unique 제약으로 중복 생성을 방지
-
 ### Outbox 테이블 정리
 
-`processed: true`인 이벤트는 일정 기간 후 삭제하여 테이블 비대화를 방지한다.
+`processed: true`인 이벤트는 일정 기간 후 삭제한다 (OutboxRelay의 cleanup 메서드, 기본 7일).
 
-```typescript
-// outbox/outbox-processor.ts — 정리 스케줄 추가
-@Cron('0 3 * * *')  // 매일 03:00
-public async cleanup(): Promise<void> {
-  const repo = this.dataSource.getRepository(OutboxEntity)
-  const threshold = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)  // 7일 전
-  await repo.delete({ processed: true, createdAt: LessThan(threshold) })
-}
-```
+### 원칙
 
-- 보관 기간은 프로젝트 요구사항에 따라 조정한다 (기본 7일).
-- 정리 대상은 `processed: true`인 이벤트만이다.
+- **이벤트는 Aggregate 내부에서만 생성한다**: 도메인 메서드가 이벤트 객체를 `_events`에 추가한다.
+- **Repository.save()에서 Aggregate + Outbox를 함께 저장한다**: Command Service는 outbox를 직접 다루지 않는다.
+- **Outbox → SQS → EventHandler 순서로 전달한다**: 이벤트 발행의 각 단계가 독립적이다.
+- **EventHandler는 멱등하게 구현한다**: SQS at-least-once 전달 특성에 대비한다.
+- **EventHandler는 application/event/에 배치한다**: `@HandleEvent` 데코레이터로 eventType을 지정한다.
 
 ---
 
@@ -1593,8 +1625,7 @@ export class OrderCommandService {
   constructor(
     private readonly orderRepository: OrderRepository,
     private readonly paymentRepository: PaymentRepository,
-    private readonly transactionManager: TransactionManager,
-    private readonly outboxWriter: OutboxWriter
+    private readonly transactionManager: TransactionManager
   ) {}
 
   public async cancelOrder(command: CancelOrderCommand): Promise<void> {
@@ -1605,37 +1636,21 @@ export class OrderCommandService {
 
     order.cancel(command.reason)
 
-    // Aggregate 저장 + 이벤트 outbox 저장을 하나의 트랜잭션으로
+    // Repository.saveOrder() 내부에서 Aggregate + outbox를 함께 저장
     await this.transactionManager.run(async () => {
       await this.paymentRepository.deletePaymentMethods(order.orderId)
       await this.orderRepository.saveOrder(order)
-      await this.outboxWriter.saveAll(order.domainEvents)
     })
-    order.clearEvents()
   }
 }
 ```
 
-#### 이벤트가 있는 단일 Repository 호출
-
-도메인 이벤트가 수집된 경우, 단일 Repository 호출이라도 outbox 저장을 함께 트랜잭션으로 묶는다.
+#### 단일 Repository 호출
 
 ```typescript
 public async createOrder(command: CreateOrderCommand): Promise<void> {
   const order = new Order({ ... })
-  await this.transactionManager.run(async () => {
-    await this.orderRepository.saveOrder(order)
-    await this.outboxWriter.saveAll(order.domainEvents)
-  })
-  order.clearEvents()
-}
-
-// 잘못된 방식 — 불필요한 트랜잭션 래핑
-public async createOrder(command: CreateOrderCommand): Promise<void> {
-  const order = new Order({ ... })
-  await this.transactionManager.run(async () => {
-    await this.orderRepository.saveOrder(order)
-  })
+  await this.orderRepository.saveOrder(order)  // 내부에서 outbox 저장 포함
 }
 ```
 
@@ -2306,7 +2321,6 @@ export class CancelOrderCommand {
 // application/command/cancel-order-command-handler.ts — CommandHandler
 import { CommandHandler, ICommandHandler } from '@nestjs/cqrs'
 
-import { OutboxWriter } from '@/outbox/outbox-writer'
 import { TransactionManager } from '@/database/transaction-manager'
 import { CancelOrderCommand } from '@/order/application/command/cancel-order-command'
 import { OrderRepository } from '@/order/domain/order-repository'
@@ -2318,8 +2332,7 @@ export class CancelOrderCommandHandler implements ICommandHandler<CancelOrderCom
   constructor(
     private readonly orderRepository: OrderRepository,
     private readonly paymentRepository: PaymentRepository,
-    private readonly transactionManager: TransactionManager,
-    private readonly outboxWriter: OutboxWriter
+    private readonly transactionManager: TransactionManager
   ) {}
 
   public async execute(command: CancelOrderCommand): Promise<void> {
@@ -2330,13 +2343,11 @@ export class CancelOrderCommandHandler implements ICommandHandler<CancelOrderCom
 
     order.cancel(command.reason)
 
-    // Aggregate 저장 + 이벤트 outbox 저장을 같은 트랜잭션으로
+    // Repository.saveOrder() 내부에서 Aggregate + outbox를 함께 저장
     await this.transactionManager.run(async () => {
       await this.paymentRepository.deletePaymentMethods(order.orderId)
       await this.orderRepository.saveOrder(order)
-      await this.outboxWriter.saveAll(order.domainEvents)
     })
-    order.clearEvents()
   }
 }
 ```

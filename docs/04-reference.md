@@ -207,7 +207,6 @@ export abstract class PaymentRepository {
 import { Injectable } from '@nestjs/common'
 
 import { TransactionManager } from '@/database/transaction-manager'
-import { OutboxWriter } from '@/outbox/outbox-writer'
 import { CancelOrderCommand } from '@/order/application/command/cancel-order-command'
 import { CreateOrderCommand } from '@/order/application/command/create-order-command'
 import { DeleteOrderCommand } from '@/order/application/command/delete-order-command'
@@ -225,8 +224,7 @@ export class OrderService {
   constructor(
     private readonly orderRepository: OrderRepository,
     private readonly paymentRepository: PaymentRepository,
-    private readonly transactionManager: TransactionManager,
-    private readonly outboxWriter: OutboxWriter
+    private readonly transactionManager: TransactionManager
   ) {}
 
   public async getOrders(query: GetOrdersQuery): Promise<GetOrdersResult> {
@@ -278,13 +276,11 @@ export class OrderService {
     // 비즈니스 규칙은 Aggregate 내부에서 검증
     order.cancel(command.reason)
 
-    // Aggregate 저장 + 이벤트 outbox 저장을 같은 트랜잭션으로
+    // Repository.saveOrder() 내부에서 Aggregate + outbox를 함께 저장
     await this.transactionManager.run(async () => {
       await this.paymentRepository.deletePaymentMethods(order.orderId)
       await this.orderRepository.saveOrder(order)
-      await this.outboxWriter.saveAll(order.domainEvents)
     })
-    order.clearEvents()
   }
 
   public async deleteOrder(command: DeleteOrderCommand): Promise<void> {
@@ -414,6 +410,7 @@ import { InjectRepository } from '@nestjs/typeorm'
 import { Repository } from 'typeorm'
 
 import { TransactionManager } from '@/database/transaction-manager'
+import { OutboxWriter } from '@/outbox/outbox-writer'
 import { Order } from '@/order/domain/order'
 import { OrderItem } from '@/order/domain/order-item'
 import { OrderRepository } from '@/order/domain/order-repository'
@@ -425,7 +422,8 @@ export class OrderRepositoryImpl extends OrderRepository {
   constructor(
     @InjectRepository(OrderEntity) private readonly orderRepo: Repository<OrderEntity>,
     @InjectRepository(OrderItemEntity) private readonly orderItemRepo: Repository<OrderItemEntity>,
-    private readonly transactionManager: TransactionManager
+    private readonly transactionManager: TransactionManager,
+    private readonly outboxWriter: OutboxWriter
   ) {
     super()
   }
@@ -474,6 +472,11 @@ export class OrderRepositoryImpl extends OrderRepository {
         quantity: i.quantity
       }))
     })
+    // 도메인 이벤트가 있으면 outbox에 함께 저장 (같은 트랜잭션)
+    if (order.domainEvents.length > 0) {
+      await this.outboxWriter.saveAll(order.domainEvents)
+      order.clearEvents()
+    }
   }
 
   public async deleteOrder(orderId: string): Promise<void> {
