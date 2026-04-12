@@ -202,6 +202,8 @@ export abstract class PaymentRepository {
 
 ### Service
 
+> 이 템플릿은 단순 도메인용으로 하나의 Service에 읽기/쓰기를 포함한다. Command Service와 Query Service 분리가 필요한 경우 [layer-architecture.md](architecture/layer-architecture.md)를 참조한다.
+
 ```typescript
 // application/order-service.ts
 import { Injectable } from '@nestjs/common'

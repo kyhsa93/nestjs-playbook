@@ -206,6 +206,7 @@ import { InjectRepository } from '@nestjs/typeorm'
 import { Repository } from 'typeorm'
 
 import { TransactionManager } from '@/database/transaction-manager'
+import { OutboxWriter } from '@/outbox/outbox-writer'
 import { Order } from '@/order/domain/order'
 import { OrderItem } from '@/order/domain/order-item'
 import { OrderRepository } from '@/order/domain/order-repository'
@@ -217,7 +218,8 @@ export class OrderRepositoryImpl extends OrderRepository {
   constructor(
     @InjectRepository(OrderEntity) private readonly orderRepo: Repository<OrderEntity>,
     @InjectRepository(OrderItemEntity) private readonly orderItemRepo: Repository<OrderItemEntity>,
-    private readonly transactionManager: TransactionManager
+    private readonly transactionManager: TransactionManager,
+    private readonly outboxWriter: OutboxWriter
   ) {
     super()
   }

@@ -590,7 +590,7 @@ IM = Implementer             VA = Validator
 
 전술적 설계서를 기반으로 코드를 생성하는 에이전트. Vertical Slicing 방식으로 유스케이스 단위 구현을 수행한다.
 
-**구현 시 [02-architecture.md](02-architecture.md)의 아키텍처 규칙과 [03-conventions.md](03-conventions.md)의 코딩 컨벤션을 반드시 따른다.**
+**구현 시 [architecture/](architecture/) 디렉토리의 아키텍처 규칙과 [03-conventions.md](03-conventions.md)의 코딩 컨벤션을 반드시 따른다.**
 
 ### 입력
 

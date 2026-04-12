@@ -92,5 +92,6 @@ public async saveOrder(order: Order): Promise<void> {
       quantity: i.quantity
     }))
   })
+  // 도메인 이벤트 outbox 저장은 domain-events.md 참조
 }
 ```

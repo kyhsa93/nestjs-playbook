@@ -102,7 +102,7 @@
 [ ] Repository 구현체가 비즈니스 로직을 포함하는가?
     → 있다면 Aggregate 또는 Service로 이동
 [ ] Service 클래스의 멤버 구성 순서가 (1) private readonly 필드 → (2) constructor → (3) public 메서드 → (4) private 메서드인가?
-[ ] Application 레이어의 디렉토리 구조가 02-architecture.md와 일치하는가? (command/, query/ 등)
+[ ] Application 레이어의 디렉토리 구조가 directory-structure.md와 일치하는가? (command/, query/ 등)
     → 쓰기 유스케이스가 있다면 command/ 디렉토리와 Command 객체가 존재해야 한다
     → 읽기 유스케이스가 있다면 query/ 디렉토리와 Query/Result 객체가 존재해야 한다
 [ ] Application Service가 Command Service와 Query Service로 분리되어 있는가?

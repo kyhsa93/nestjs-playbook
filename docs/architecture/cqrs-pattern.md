@@ -281,7 +281,7 @@ export class OrderModule {}
 |------|-------------|-------------------|
 | Application 레이어 | `<domain>-service.ts` 하나에 모든 유스케이스 | Command/Query별 개별 Handler 파일 |
 | Controller 의존성 | `OrderService` 주입 | `CommandBus`, `QueryBus` 주입 |
-| 이벤트 처리 | Service 내부에서 직접 처리 또는 주석 처리 | `EventBus`로 발행, `EventHandler`가 수신 |
+| 이벤트 처리 | Outbox + SQS + `@HandleEvent` 핸들러 | Outbox + SQS + `@HandleEvent` 핸들러 (동일) |
 | Module 등록 | `OrderService` 1개 등록 | 각 Handler를 개별 등록 |
 | 읽기/쓰기 분리 | Service 메서드로 구분 | Command/Query로 명시적 분리 |
 
