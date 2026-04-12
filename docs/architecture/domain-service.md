@@ -30,7 +30,7 @@ export class OrderPricingService {
 > Domain Service 예시에서 사용하는 에러 메시지(`'쿠폰이 만료되었습니다.'`)는 해당 도메인의 `<domain>-error-message.ts` enum에 반드시 정의해야 한다.
 
 ```typescript
-// application/order-service.ts — Application Service에서 Domain Service 호출
+// application/command/order-command-service.ts — Command Service에서 Domain Service 호출
 constructor(
   private readonly orderRepository: OrderRepository,
   private readonly orderPricingService: OrderPricingService

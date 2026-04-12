@@ -668,15 +668,15 @@ describe('Order', () => {
 Application Service 테스트는 Repository를 mock으로 대체한다.
 
 ```typescript
-// order/application/order-service.spec.ts
-describe('OrderService', () => {
-  let service: OrderService
+// order/application/command/order-command-service.spec.ts
+describe('OrderCommandService', () => {
+  let service: OrderCommandService
   let orderRepository: jest.Mocked<OrderRepository>
 
   beforeEach(async () => {
     const module = await Test.createTestingModule({
       providers: [
-        OrderService,
+        OrderCommandService,
         {
           provide: OrderRepository,
           useValue: {
@@ -684,18 +684,22 @@ describe('OrderService', () => {
             saveOrder: jest.fn(),
             deleteOrder: jest.fn()
           }
+        },
+        {
+          provide: TransactionManager,
+          useValue: { run: jest.fn((fn) => fn()), getManager: jest.fn() }
         }
       ]
     }).compile()
 
-    service = module.get(OrderService)
+    service = module.get(OrderCommandService)
     orderRepository = module.get(OrderRepository)
   })
 
   it('주문이 존재하지 않으면 에러를 throw한다', async () => {
     orderRepository.findOrders.mockResolvedValue({ orders: [], count: 0 })
 
-    await expect(service.getOrder({ orderId: 'non-existent-id' }))
+    await expect(service.cancelOrder({ orderId: 'non-existent-id', reason: '변심' }))
       .rejects.toThrow(OrderErrorMessage['주문을 찾을 수 없습니다.'])
   })
 })

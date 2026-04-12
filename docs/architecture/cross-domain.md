@@ -40,7 +40,7 @@ export class UserAdapterImpl extends UserAdapter {
   }
 }
 
-// order/application/order-service.ts — Adapter를 통해 호출
+// order/application/command/order-command-service.ts — Adapter를 통해 호출
 public async getOrderWithUser(param: { orderId: string }): Promise<GetOrderWithUserResult> {
   const order = await this.orderRepository
     .findOrders({ orderId: param.orderId, take: 1, page: 0 })

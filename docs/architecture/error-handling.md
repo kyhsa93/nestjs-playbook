@@ -35,7 +35,7 @@ Domain 레이어와 Application Service에서는 plain `Error`만 throw한다.
 import { OrderErrorMessage } from '@/order/order-error-message'
 if (this._status === 'cancelled') throw new Error(OrderErrorMessage['이미 취소된 주문입니다.'])
 
-// application/order-service.ts — Service
+// application/command/order-command-service.ts — Command Service
 import { OrderErrorMessage as ErrorMessage } from '@/order/order-error-message'
 if (!order) throw new Error(ErrorMessage['주문을 찾을 수 없습니다.'])
 ```

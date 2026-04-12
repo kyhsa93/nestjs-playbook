@@ -81,7 +81,8 @@ export class AppModule {}
   application/                                  application/
     adapter/                                      user-service.ts
       user-adapter.ts (abstract class)
-    order-service.ts (UserAdapter 주입)
+    command/
+      order-command-service.ts (UserAdapter 주입)
   infrastructure/
     user-adapter-impl.ts (UserService 호출)  ←imports→  UserModule
 ```
@@ -132,25 +133,22 @@ export class UserAdapterImpl extends UserAdapter {
 **Step 3 — Application Service에서 Adapter 사용**
 
 ```typescript
-// order/application/order-service.ts
+// order/application/command/order-command-service.ts
 @Injectable()
-export class OrderService {
+export class OrderCommandService {
   constructor(
     private readonly orderRepository: OrderRepository,
     private readonly userAdapter: UserAdapter
   ) {}
 
-  public async getOrderWithUser(param: { orderId: string }): Promise<GetOrderWithUserResult> {
-    const order = await this.orderRepository
-      .findOrders({ orderId: param.orderId, take: 1, page: 0 })
-      .then((r) => r.orders.pop())
-    if (!order) throw new Error(ErrorMessage['주문을 찾을 수 없습니다.'])
-
+  public async createOrderWithUser(command: CreateOrderCommand): Promise<void> {
     const user = await this.userAdapter
-      .findUsers({ userId: order.userId, take: 1, page: 0 })
+      .findUsers({ userId: command.userId, take: 1, page: 0 })
       .then((r) => r.users.pop())
+    if (!user) throw new Error(ErrorMessage['사용자를 찾을 수 없습니다.'])
 
-    return { orderId: order.orderId, status: order.status, userName: user?.name ?? null }
+    const order = new Order({ userId: user.userId, items: command.items.map((i) => new OrderItem(i)), status: 'pending' })
+    await this.orderRepository.saveOrder(order)
   }
 }
 ```
@@ -163,10 +161,12 @@ export class OrderService {
   imports: [TypeOrmModule.forFeature([UserEntity])],
   controllers: [UserController],
   providers: [
-    UserService,
-    { provide: UserRepository, useClass: UserRepositoryImpl }
+    UserCommandService,
+    UserQueryService,
+    { provide: UserRepository, useClass: UserRepositoryImpl },
+    { provide: UserQuery, useClass: UserQueryImpl }
   ],
-  exports: [UserService]
+  exports: [UserCommandService, UserQueryService]
 })
 export class UserModule {}
 
@@ -175,8 +175,10 @@ export class UserModule {}
   imports: [UserModule, TypeOrmModule.forFeature([OrderEntity, OrderItemEntity])],
   controllers: [OrderController],
   providers: [
-    OrderService,
+    OrderCommandService,
+    OrderQueryService,
     { provide: OrderRepository, useClass: OrderRepositoryImpl },
+    { provide: OrderQuery, useClass: OrderQueryImpl },
     { provide: UserAdapter, useClass: UserAdapterImpl }
   ]
 })
@@ -203,7 +205,8 @@ export class OrderModule {}
   application/
     service/
       crypto-service.ts (abstract class)     ← 인터페이스 정의
-    order-service.ts (CryptoService 주입)
+    command/
+      order-command-service.ts (CryptoService 주입)
   infrastructure/
     crypto-service-impl.ts (AES 구현)        ← 실제 구현체
 ```
@@ -258,9 +261,9 @@ export class CryptoServiceImpl extends CryptoService {
 **Step 3 — Application Service에서 기술 인프라 Service 사용**
 
 ```typescript
-// order/application/order-service.ts
+// order/application/command/order-command-service.ts
 @Injectable()
-export class OrderService {
+export class OrderCommandService {
   constructor(
     private readonly orderRepository: OrderRepository,
     private readonly cryptoService: CryptoService
@@ -280,8 +283,10 @@ export class OrderService {
 @Module({
   controllers: [OrderController],
   providers: [
-    OrderService,
+    OrderCommandService,
+    OrderQueryService,
     { provide: OrderRepository, useClass: OrderRepositoryImpl },
+    { provide: OrderQuery, useClass: OrderQueryImpl },
     { provide: CryptoService, useClass: CryptoServiceImpl }
   ]
 })
@@ -429,8 +434,10 @@ public async getAttachmentUrl(param: { fileKey: string }): Promise<{ downloadUrl
 @Module({
   controllers: [OrderController],
   providers: [
-    OrderService,
+    OrderCommandService,
+    OrderQueryService,
     { provide: OrderRepository, useClass: OrderRepositoryImpl },
+    { provide: OrderQuery, useClass: OrderQueryImpl },
     AuthService
   ]
 })
@@ -454,7 +461,10 @@ export class OrderModule {}
 @UseInterceptors(LoggingInterceptor)
 export class OrderController {
   private readonly logger = new Logger(OrderController.name)
-  constructor(private readonly orderService: OrderService) {}
+  constructor(
+    private readonly orderCommandService: OrderCommandService,
+    private readonly orderQueryService: OrderQueryService
+  ) {}
 }
 ```
 

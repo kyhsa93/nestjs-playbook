@@ -20,16 +20,18 @@ src/
       order-repository.ts            ← Repository 인터페이스 (abstract class)
       payment-repository.ts          ← Repository 인터페이스 (abstract class)
     application/
-      order-service.ts
       adapter/
         user-adapter.ts                ← 외부 도메인 호출 인터페이스 (abstract class)
       service/
         crypto-service.ts              ← 기술 인프라 인터페이스 (abstract class)
       command/
+        order-command-service.ts       ← Command Service (쓰기)
         cancel-order-command.ts
         create-order-command.ts
         delete-order-command.ts
       query/
+        order-query-service.ts         ← Query Service (읽기)
+        order-query.ts                 ← Query 인터페이스 (abstract class)
         get-order-param.ts
         get-order-result.ts
         get-orders-query.ts
@@ -48,6 +50,7 @@ src/
       entity/
         order.entity.ts              ← TypeORM Entity
         order-item.entity.ts         ← TypeORM Entity
+      order-query-impl.ts             ← Query 구현체
       order-repository-impl.ts       ← Repository 구현체
       payment-repository-impl.ts
       user-adapter-impl.ts           ← 외부 도메인 Adapter 구현체
@@ -200,21 +203,16 @@ export abstract class PaymentRepository {
 
 ## Application 레이어
 
-### Service
-
-> 이 템플릿은 단순 도메인용으로 하나의 Service에 읽기/쓰기를 포함한다. Command Service와 Query Service 분리가 필요한 경우 [layer-architecture.md](architecture/layer-architecture.md)를 참조한다.
+### Command Service
 
 ```typescript
-// application/order-service.ts
+// application/command/order-command-service.ts
 import { Injectable } from '@nestjs/common'
 
 import { TransactionManager } from '@/database/transaction-manager'
 import { CancelOrderCommand } from '@/order/application/command/cancel-order-command'
 import { CreateOrderCommand } from '@/order/application/command/create-order-command'
 import { DeleteOrderCommand } from '@/order/application/command/delete-order-command'
-import { GetOrderResult } from '@/order/application/query/get-order-result'
-import { GetOrdersQuery } from '@/order/application/query/get-orders-query'
-import { GetOrdersResult } from '@/order/application/query/get-orders-result'
 import { Order } from '@/order/domain/order'
 import { OrderItem } from '@/order/domain/order-item'
 import { OrderRepository } from '@/order/domain/order-repository'
@@ -222,41 +220,12 @@ import { PaymentRepository } from '@/order/domain/payment-repository'
 import { OrderErrorMessage as ErrorMessage } from '@/order/order-error-message'
 
 @Injectable()
-export class OrderService {
+export class OrderCommandService {
   constructor(
     private readonly orderRepository: OrderRepository,
     private readonly paymentRepository: PaymentRepository,
     private readonly transactionManager: TransactionManager
   ) {}
-
-  public async getOrders(query: GetOrdersQuery): Promise<GetOrdersResult> {
-    const { orders, count } = await this.orderRepository.findOrders({
-      take: query.take,
-      page: query.page,
-      status: query.status
-    })
-    return {
-      orders: orders.map((o) => ({
-        orderId: o.orderId,
-        description: null,
-        status: o.status
-      })),
-      totalCount: count
-    }
-  }
-
-  // 단건 조회 — findOrders에 take: 1 전달 후 pop()
-  public async getOrder(param: { orderId: string }): Promise<GetOrderResult> {
-    const order = await this.orderRepository
-      .findOrders({ orderId: param.orderId, take: 1, page: 0 })
-      .then((r) => r.orders.pop())
-    if (!order) throw new Error(ErrorMessage['주문을 찾을 수 없습니다.'])
-    return {
-      orderId: order.orderId,
-      status: order.status,
-      totalAmount: order.getTotalAmount()
-    }
-  }
 
   public async createOrder(command: CreateOrderCommand): Promise<void> {
     // Aggregate 생성 (불변식은 생성자에서 검증)
@@ -292,6 +261,45 @@ export class OrderService {
     if (!order) throw new Error(ErrorMessage['주문을 찾을 수 없습니다.'])
 
     await this.orderRepository.deleteOrder(command.orderId)
+  }
+}
+```
+
+### Query 인터페이스
+
+```typescript
+// application/query/order-query.ts — abstract class
+import { GetOrderResult } from '@/order/application/query/get-order-result'
+import { GetOrdersQuery } from '@/order/application/query/get-orders-query'
+import { GetOrdersResult } from '@/order/application/query/get-orders-result'
+
+export abstract class OrderQuery {
+  abstract getOrders(query: GetOrdersQuery): Promise<GetOrdersResult>
+  abstract getOrder(param: { orderId: string }): Promise<GetOrderResult>
+}
+```
+
+### Query Service
+
+```typescript
+// application/query/order-query-service.ts
+import { Injectable } from '@nestjs/common'
+
+import { GetOrderResult } from '@/order/application/query/get-order-result'
+import { GetOrdersQuery } from '@/order/application/query/get-orders-query'
+import { GetOrdersResult } from '@/order/application/query/get-orders-result'
+import { OrderQuery } from '@/order/application/query/order-query'
+
+@Injectable()
+export class OrderQueryService {
+  constructor(private readonly orderQuery: OrderQuery) {}
+
+  public async getOrders(query: GetOrdersQuery): Promise<GetOrdersResult> {
+    return this.orderQuery.getOrders(query)
+  }
+
+  public async getOrder(param: { orderId: string }): Promise<GetOrderResult> {
+    return this.orderQuery.getOrder(param)
   }
 }
 ```
@@ -403,6 +411,68 @@ export class GetOrdersResult {
 
 ## Infrastructure 레이어
 
+### Query 구현체
+
+```typescript
+// infrastructure/order-query-impl.ts
+import { Injectable } from '@nestjs/common'
+import { InjectRepository } from '@nestjs/typeorm'
+import { Repository } from 'typeorm'
+
+import { GetOrderResult } from '@/order/application/query/get-order-result'
+import { GetOrdersQuery } from '@/order/application/query/get-orders-query'
+import { GetOrdersResult } from '@/order/application/query/get-orders-result'
+import { OrderQuery } from '@/order/application/query/order-query'
+import { OrderEntity } from '@/order/infrastructure/entity/order.entity'
+import { OrderItemEntity } from '@/order/infrastructure/entity/order-item.entity'
+import { OrderErrorMessage as ErrorMessage } from '@/order/order-error-message'
+
+@Injectable()
+export class OrderQueryImpl extends OrderQuery {
+  constructor(
+    @InjectRepository(OrderEntity) private readonly orderRepo: Repository<OrderEntity>,
+    @InjectRepository(OrderItemEntity) private readonly orderItemRepo: Repository<OrderItemEntity>
+  ) {
+    super()
+  }
+
+  public async getOrders(query: GetOrdersQuery): Promise<GetOrdersResult> {
+    const qb = this.orderRepo.createQueryBuilder('order')
+      .orderBy('order.orderId', 'DESC')
+      .take(query.take)
+      .skip(query.page * query.take)
+
+    if (query.status?.length) qb.andWhere('order.status IN (:...status)', { status: query.status })
+
+    const [rows, count] = await qb.getManyAndCount()
+
+    return {
+      orders: rows.map((o) => ({
+        orderId: o.orderId,
+        description: null,
+        status: o.status
+      })),
+      totalCount: count
+    }
+  }
+
+  public async getOrder(param: { orderId: string }): Promise<GetOrderResult> {
+    const row = await this.orderRepo.createQueryBuilder('order')
+      .leftJoinAndSelect('order.items', 'item')
+      .where('order.orderId = :orderId', { orderId: param.orderId })
+      .getOne()
+    if (!row) throw new Error(ErrorMessage['주문을 찾을 수 없습니다.'])
+
+    const totalAmount = row.items.reduce((sum, item) => sum + item.price * item.quantity, 0)
+    return {
+      orderId: row.orderId,
+      status: row.status,
+      totalAmount
+    }
+  }
+}
+```
+
 ### Repository 구현체
 
 ```typescript
@@ -510,9 +580,10 @@ import {
 import { AuthGuard } from '@/auth/auth.guard'
 import { generateErrorResponse } from '@/common/generate-error-response'
 import { LoggingInterceptor } from '@/common/logging.interceptor'
-import { OrderService } from '@/order/application/order-service'
+import { OrderCommandService } from '@/order/application/command/order-command-service'
 import { CancelOrderCommand } from '@/order/application/command/cancel-order-command'
 import { CreateOrderCommand } from '@/order/application/command/create-order-command'
+import { OrderQueryService } from '@/order/application/query/order-query-service'
 import { CancelOrderRequestBody } from '@/order/interface/dto/cancel-order-request-body'
 import { CreateOrderRequestBody } from '@/order/interface/dto/create-order-request-body'
 import { DeleteOrderRequestParam } from '@/order/interface/dto/delete-order-request-param'
@@ -530,7 +601,10 @@ import { OrderErrorMessage } from '@/order/order-error-message'
 export class OrderController {
   private readonly logger = new Logger(OrderController.name)
 
-  constructor(private readonly orderService: OrderService) {}
+  constructor(
+    private readonly orderCommandService: OrderCommandService,
+    private readonly orderQueryService: OrderQueryService
+  ) {}
 
   @Get('/orders')
   @ApiOperation({ operationId: 'getOrders' })
@@ -538,7 +612,7 @@ export class OrderController {
   public async getOrders(
     @Query() querystring: GetOrdersRequestQuerystring
   ): Promise<GetOrdersResponseBody> {
-    return this.orderService.getOrders(querystring).catch((error) => {
+    return this.orderQueryService.getOrders(querystring).catch((error) => {
       this.logger.error(error)
       throw generateErrorResponse(error.message, [])
     })
@@ -550,7 +624,7 @@ export class OrderController {
   public async getOrder(
     @Param() param: GetOrderRequestParam
   ): Promise<GetOrderResponseBody> {
-    return this.orderService.getOrder(param).catch((error) => {
+    return this.orderQueryService.getOrder(param).catch((error) => {
       this.logger.error(error)
       throw generateErrorResponse(error.message, [
         [OrderErrorMessage['주문을 찾을 수 없습니다.'], NotFoundException]
@@ -564,7 +638,7 @@ export class OrderController {
   public async createOrder(
     @Body() body: CreateOrderRequestBody
   ): Promise<void> {
-    return this.orderService.createOrder(new CreateOrderCommand(body)).catch((error) => {
+    return this.orderCommandService.createOrder(new CreateOrderCommand(body)).catch((error) => {
       this.logger.error(error)
       throw generateErrorResponse(error.message, [])
     })
@@ -578,7 +652,7 @@ export class OrderController {
     @Param('orderId') orderId: string,
     @Body() body: CancelOrderRequestBody
   ): Promise<void> {
-    return this.orderService.cancelOrder(new CancelOrderCommand({ ...body, orderId })).catch((error) => {
+    return this.orderCommandService.cancelOrder(new CancelOrderCommand({ ...body, orderId })).catch((error) => {
       this.logger.error(error)
       throw generateErrorResponse(error.message, [
         [OrderErrorMessage['주문을 찾을 수 없습니다.'], NotFoundException],
@@ -595,7 +669,7 @@ export class OrderController {
   public async deleteOrder(
     @Param() param: DeleteOrderRequestParam
   ): Promise<void> {
-    return this.orderService.deleteOrder(param).catch((error) => {
+    return this.orderCommandService.deleteOrder(param).catch((error) => {
       this.logger.error(error)
       throw generateErrorResponse(error.message, [
         [OrderErrorMessage['주문을 찾을 수 없습니다.'], NotFoundException]
@@ -692,13 +766,16 @@ import { Module } from '@nestjs/common'
 import { TypeOrmModule } from '@nestjs/typeorm'
 
 import { AuthService } from '@/auth/auth-service'
-import { OrderService } from '@/order/application/order-service'
+import { OrderCommandService } from '@/order/application/command/order-command-service'
+import { OrderQuery } from '@/order/application/query/order-query'
+import { OrderQueryService } from '@/order/application/query/order-query-service'
 import { CryptoService } from '@/order/application/service/crypto-service'
 import { OrderRepository } from '@/order/domain/order-repository'
 import { PaymentRepository } from '@/order/domain/payment-repository'
 import { CryptoServiceImpl } from '@/order/infrastructure/crypto-service-impl'
 import { OrderEntity } from '@/order/infrastructure/entity/order.entity'
 import { OrderItemEntity } from '@/order/infrastructure/entity/order-item.entity'
+import { OrderQueryImpl } from '@/order/infrastructure/order-query-impl'
 import { OrderRepositoryImpl } from '@/order/infrastructure/order-repository-impl'
 import { PaymentRepositoryImpl } from '@/order/infrastructure/payment-repository-impl'
 import { OrderController } from '@/order/interface/order-controller'
@@ -707,7 +784,9 @@ import { OrderController } from '@/order/interface/order-controller'
   imports: [TypeOrmModule.forFeature([OrderEntity, OrderItemEntity])],
   controllers: [OrderController],
   providers: [
-    OrderService,
+    OrderCommandService,
+    OrderQueryService,
+    { provide: OrderQuery, useClass: OrderQueryImpl },
     { provide: OrderRepository, useClass: OrderRepositoryImpl },
     { provide: PaymentRepository, useClass: PaymentRepositoryImpl },
     { provide: CryptoService, useClass: CryptoServiceImpl },

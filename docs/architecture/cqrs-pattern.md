@@ -279,11 +279,11 @@ export class OrderModule {}
 
 | 항목 | Service 방식 | @nestjs/cqrs 방식 |
 |------|-------------|-------------------|
-| Application 레이어 | `<domain>-service.ts` 하나에 모든 유스케이스 | Command/Query별 개별 Handler 파일 |
-| Controller 의존성 | `OrderService` 주입 | `CommandBus`, `QueryBus` 주입 |
+| Application 레이어 | `CommandService` + `QueryService` 분리 | Command/Query별 개별 Handler 파일 |
+| Controller 의존성 | `OrderCommandService` + `OrderQueryService` 주입 | `CommandBus`, `QueryBus` 주입 |
 | 이벤트 처리 | Outbox + SQS + `@HandleEvent` 핸들러 | Outbox + SQS + `@HandleEvent` 핸들러 (동일) |
-| Module 등록 | `OrderService` 1개 등록 | 각 Handler를 개별 등록 |
-| 읽기/쓰기 분리 | Service 메서드로 구분 | Command/Query로 명시적 분리 |
+| Module 등록 | `CommandService`, `QueryService`, `{ provide: Query, useClass: QueryImpl }` 등록 | 각 Handler를 개별 등록 |
+| 읽기/쓰기 분리 | Command Service / Query Service로 분리 | Command/Query Handler로 분리 |
 
 ### 적용 기준
 
