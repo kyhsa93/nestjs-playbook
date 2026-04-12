@@ -1,0 +1,56 @@
+# 디렉토리 구조
+
+```
+src/
+  database/                            # 데이터베이스 모듈
+    database-module.ts
+    base.entity.ts                     # 공통 컬럼 (createdAt, updatedAt, deletedAt)
+    data-source.ts                     # TypeORM DataSource 설정
+    transaction-manager.ts             # 트랜잭션 매니저 (AsyncLocalStorage 기반)
+  outbox/                              # Outbox 모듈
+    outbox-module.ts
+    outbox.entity.ts                   # Outbox 테이블 Entity
+    outbox-writer.ts                   # 트랜잭션 안에서 이벤트 저장 (Repository에서 호출)
+    outbox-relay.ts                    # Outbox → SQS 전송 (폴링)
+    event-consumer.ts                  # SQS → EventHandler 수신 (폴링)
+    event-handler-registry.ts          # eventType → Handler 라우팅
+  config/
+    <concern>.config.ts              # 관심사별 설정 팩토리 (database, jwt 등)
+    config-validator.ts              # 환경 변수 검증
+  <domain>/
+    domain/                          # 도메인 레이어
+      <aggregate-root>.ts
+      <entity>.ts
+      <value-object>.ts
+      <domain-event>.ts
+      <aggregate>-repository.ts      # Repository 인터페이스 (abstract class)
+    application/
+      adapter/
+        <external-domain>-adapter.ts    # 외부 도메인 호출 인터페이스 (abstract class)
+      service/
+        <concern>-service.ts            # 기술 인프라 인터페이스 (abstract class)
+      command/
+        <domain>-command-service.ts     # Command Service (쓰기 — Repository 사용)
+        <verb>-<noun>-command.ts
+      query/
+        <domain>-query-service.ts       # Query Service (읽기 — Query 인터페이스 사용)
+        <domain>-query.ts               # Query 인터페이스 (abstract class)
+        <verb>-<noun>-query.ts
+        <verb>-<noun>-result.ts
+    interface/
+      <domain>-controller.ts              # Controller
+      dto/
+        <verb>-<noun>-request-body.ts     # 요청 DTO
+        <verb>-<noun>-request-param.ts
+        <verb>-<noun>-request-querystring.ts
+        <verb>-<noun>-response-body.ts    # 응답 DTO
+    infrastructure/
+      <aggregate>-repository-impl.ts    # Repository 구현체
+      <domain>-query-impl.ts            # Query 구현체 (읽기 전용 DB 접근)
+      <external-domain>-adapter-impl.ts # 외부 도메인 Adapter 구현체
+      <concern>-service-impl.ts         # 기술 인프라 Service 구현체
+    <domain>-module.ts
+    <domain>-error-message.ts
+    <domain>-enum.ts
+    <domain>-constant.ts
+```

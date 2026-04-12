@@ -5,10 +5,29 @@ AI Agent가 NestJS TypeScript 서버 프로젝트를 도메인 주도 설계 기
 ## 프로젝트 구조
 
 ```
-docs/                                  ← 상세 가이드 (단일 원본, 도구 무관)
+docs/
   01-development-process.md              에이전트 역할 기반 개발 프로세스
-  02-architecture.md                     레이어 아키텍처, Repository, 에러 처리
-  03-conventions.md                      네이밍, 타이핑, import, Swagger, 커밋
+  architecture/                          아키텍처 가이드 (주제별 분리)
+    directory-structure.md                 디렉토리 구조
+    layer-architecture.md                  레이어 아키텍처
+    repository-pattern.md                  Repository 패턴
+    module-pattern.md                      NestJS 모듈 패턴
+    error-handling.md                      에러 처리
+    domain-events.md                       도메인 이벤트 (Outbox + SQS)
+    database-queries.md                    DB 쿼리 패턴
+    authentication.md                      인증 (Bearer JWT)
+    domain-service.md                      Domain Service
+    shared-modules.md                      공유 모듈 구조
+    cross-domain.md                        크로스 도메인 호출
+    aggregate-id.md                        Aggregate ID (UUID)
+    cqrs-pattern.md                        @nestjs/cqrs
+    config.md                              환경 설정 (ConfigModule)
+    secret-manager.md                      Secret 관리 (AWS)
+    bootstrap.md                           앱 부트스트랩 (main.ts)
+    local-dev.md                           로컬 개발 환경 (Docker Compose)
+    dockerfile.md                          Dockerfile
+    design-principles.md                   핵심 설계 원칙 요약
+  03-conventions.md                      코딩 컨벤션
   04-reference.md                        전체 도메인 구현 템플릿
   05-checklist.md                        AI Agent 자기 검토 체크리스트
 
@@ -17,21 +36,21 @@ CLAUDE.md                              ← Claude Code 진입점
 .github/copilot-instructions.md        ← GitHub Copilot 진입점
 ```
 
-각 AI 도구의 진입점 파일은 핵심 규칙 요약 + `docs/` 참조 포인터를 담는다.
-가이드 내용을 수정할 때는 `docs/`만 수정한다.
+각 AI 도구의 진입점 파일은 `docs/` 참조 포인터를 담는다.
+아키텍처 가이드는 주제별로 분리되어 있어, 작업에 필요한 파일만 참조하면 된다.
 
 ## 사용 방법
 
 ### 새 프로젝트를 시작하는 경우
 1. `docs/01-development-process.md`의 Orchestrator가 전체 흐름을 조율한다.
 2. 각 에이전트(RA → SD → DM → TD → IM → VA)가 순서대로 독립 수행하며, 산출물을 다음 에이전트에게 전달한다.
-3. Implementer 에이전트는 `docs/02-architecture.md`와 `docs/03-conventions.md`의 규칙을 따라 코드를 작성한다.
+3. Implementer 에이전트는 `docs/architecture/` 하위 문서와 `docs/03-conventions.md`의 규칙을 따라 코드를 작성한다.
 4. `docs/04-reference.md`의 템플릿을 참고하여 일관된 코드 구조를 유지한다.
 5. Validator 에이전트가 `docs/05-checklist.md`로 자기 검토를 수행한다.
 
 ### 기존 프로젝트에 기능을 추가하는 경우
 1. 필요에 따라 `docs/01-development-process.md`의 개별 에이전트를 선택적으로 활용한다. (예: Implementer + Validator만 사용)
-2. Implementer 에이전트는 `docs/02-architecture.md`와 `docs/03-conventions.md`의 규칙을 따라 코드를 작성한다.
+2. Implementer 에이전트는 `docs/architecture/` 하위 문서와 `docs/03-conventions.md`의 규칙을 따라 코드를 작성한다.
 3. `docs/04-reference.md`의 템플릿을 참고한다.
 4. Validator 에이전트가 `docs/05-checklist.md`로 자기 검토를 수행한다.
 
