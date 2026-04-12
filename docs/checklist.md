@@ -198,6 +198,10 @@
 [ ] 파일 소유 Entity에 fileKey(char 32)와 extension(varchar) 컬럼이 있는가?
     → DB에는 메타데이터만 저장, 파일 자체는 스토리지에 저장
 [ ] StorageService가 기술 인프라 Service 패턴(application/service/에 abstract class, infrastructure/에 구현체)으로 분리되어 있는가?
+[ ] main.ts에 app.enableShutdownHooks()가 호출되어 있는가?
+    → 없으면 추가. 이 호출 없이는 OnApplicationShutdown/BeforeApplicationShutdown 훅이 동작하지 않는다
+[ ] DB·Redis·Queue 등 외부 연결을 관리하는 Infrastructure 클래스에 OnApplicationShutdown이 구현되어 있는가?
+    → 커스텀 DataSource, Redis, Bull Queue 등을 직접 관리하는 경우 연결 해제 필수
 [ ] ConfigModule.forRoot()이 AppModule에 isGlobal: true로 등록되어 있는가?
 [ ] 환경 변수별 설정이 관심사별 파일(config/<concern>.config.ts)로 분리되어 있는가?
 [ ] config-validator.ts에 class-validator로 필수 환경 변수 검증이 정의되어 있는가?

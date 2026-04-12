@@ -12,6 +12,9 @@ import { AppModule } from '@/app-module'
 async function bootstrap() {
   const app = await NestFactory.create(AppModule)
 
+  // Graceful Shutdown — SIGTERM/SIGINT 수신 시 NestJS 라이프사이클 훅 활성화
+  app.enableShutdownHooks()
+
   // 전역 ValidationPipe — class-validator 자동 적용
   app.useGlobalPipes(new ValidationPipe({
     whitelist: true,           // DTO에 정의되지 않은 필드 제거
@@ -48,6 +51,7 @@ bootstrap()
 
 | 설정 | 역할 |
 |------|------|
+| `enableShutdownHooks()` | SIGTERM/SIGINT 수신 시 NestJS 종료 라이프사이클 훅 활성화 ([상세](graceful-shutdown.md)) |
 | `ValidationPipe` | class-validator 데코레이터 자동 적용, 미정의 필드 차단 |
 | `HttpExceptionFilter` | 에러 응답 형식 표준화 |
 | `enableCors` | CORS 허용 origin 설정 (환경 변수) |
