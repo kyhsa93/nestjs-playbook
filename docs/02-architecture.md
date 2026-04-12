@@ -12,9 +12,10 @@ src/
   outbox/                              # Outbox 모듈
     outbox-module.ts
     outbox.entity.ts                   # Outbox 테이블 Entity
-    outbox-writer.ts                   # 트랜잭션 안에서 이벤트 저장
-    outbox-processor.ts                # 폴링으로 미발행 이벤트 발행
-    domain-event-publisher.ts          # 이벤트를 핸들러에 전달
+    outbox-writer.ts                   # 트랜잭션 안에서 이벤트 저장 (Repository에서 호출)
+    outbox-relay.ts                    # Outbox → SQS 전송 (폴링)
+    event-consumer.ts                  # SQS → EventHandler 수신 (폴링)
+    event-handler-registry.ts          # eventType → Handler 라우팅
   config/
     <concern>.config.ts              # 관심사별 설정 팩토리 (database, jwt 등)
     config-validator.ts              # 환경 변수 검증
@@ -326,6 +327,11 @@ export class OrderRepositoryImpl extends OrderRepository {
         quantity: i.quantity
       }))
     })
+    // 도메인 이벤트가 있으면 outbox에 함께 저장 (같은 트랜잭션)
+    if (order.domainEvents.length > 0) {
+      await this.outboxWriter.saveAll(order.domainEvents)
+      order.clearEvents()
+    }
   }
 
   public async deleteOrder(orderId: string): Promise<void> {
@@ -504,7 +510,7 @@ src/
     payment-module.ts
   common/                ← 공유 유틸 (모듈 아님)
   database/              ← DatabaseModule — TypeORM DataSource, TransactionManager (@Global)
-  outbox/                ← OutboxModule — OutboxWriter, OutboxProcessor, DomainEventPublisher (@Global)
+  outbox/                ← OutboxModule — OutboxWriter, OutboxRelay, EventConsumer, EventHandlerRegistry (@Global)
   auth/                  ← AuthModule — 인증 공유 모듈
   app-module.ts          ← 루트 모듈: 도메인 모듈 조합
 ```
@@ -2068,8 +2074,9 @@ src/
     outbox-module.ts
     outbox.entity.ts
     outbox-writer.ts
-    outbox-processor.ts
-    domain-event-publisher.ts
+    outbox-relay.ts
+    event-consumer.ts
+    event-handler-registry.ts
   auth/                            # 인증 모듈 (공유)
     auth-module.ts
     auth-service.ts                # 토큰 발급/검증 (JWT)
@@ -2084,7 +2091,7 @@ src/
 
 - `src/common/` — 에러 처리, 필터, 인터셉터 등 프레임워크 공통 코드
 - `src/database/` — DatabaseModule: TypeORM DataSource, TransactionManager (`@Global`)
-- `src/outbox/` — OutboxModule: OutboxWriter, OutboxProcessor, DomainEventPublisher (`@Global`)
+- `src/outbox/` — OutboxModule: OutboxWriter, OutboxRelay, EventConsumer, EventHandlerRegistry (`@Global`)
 - `src/auth/` — 인증/인가 공유 모듈
 
 ---

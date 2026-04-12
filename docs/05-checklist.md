@@ -119,7 +119,8 @@
     → 있다면 Aggregate의 도메인 메서드로 이동 (Handler도 조율자 역할만 수행)
 [ ] @nestjs/cqrs 사용 시: Module에 CqrsModule이 imports에 포함되어 있는가?
 [ ] @nestjs/cqrs 사용 시: 모든 CommandHandler/QueryHandler/EventHandler가 Module providers에 등록되어 있는가?
-[ ] @nestjs/cqrs 사용 시: Domain Event가 EventBus를 통해 발행되고 EventHandler에서 수신하는가?
+[ ] @nestjs/cqrs 사용 시에도 Domain Event 발행은 Outbox + SQS 패턴을 따르는가?
+    → EventBus를 직접 사용하여 이벤트를 발행하지 않는다. Repository.save() → Outbox → SQS → @HandleEvent 핸들러 순서를 따른다
 [ ] 레이어 의존 방향이 올바른가? (Interface → Application → Domain ← Infrastructure)
     → 하위 레이어가 상위 레이어를 import하는 코드가 있다면 수정
 [ ] Controller 메서드가 모두 public async이며 반환 타입 Promise<ResponseType>이 명시되어 있는가?

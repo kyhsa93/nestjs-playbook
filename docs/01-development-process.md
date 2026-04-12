@@ -697,7 +697,7 @@ src/
     <domain>-enum.ts
     <domain>-constant.ts
   database/                          # DatabaseModule — TypeORM DataSource, TransactionManager (@Global)
-  outbox/                            # OutboxModule — OutboxWriter, OutboxProcessor, DomainEventPublisher (@Global)
+  outbox/                            # OutboxModule — OutboxWriter, OutboxRelay, EventConsumer, EventHandlerRegistry (@Global)
   config/                            # 설정 파일 (config-validator, database.config 등)
 ```
 
