@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ScoreReport",
+  "type": "object",
+  "required": ["taskId", "totalScore", "grade", "breakdown", "failures"],
+  "properties": {
+    "taskId": { "type": "string" },
+    "totalScore": { "type": "number" },
+    "grade": { "type": "string" },
+    "breakdown": {
+      "type": "object",
+      "required": ["structure", "architecture", "runtime", "testing", "api", "semantics"],
+      "properties": {
+        "structure": { "type": "number" },
+        "architecture": { "type": "number" },
+        "runtime": { "type": "number" },
+        "testing": { "type": "number" },
+        "api": { "type": "number" },
+        "semantics": { "type": "number" }
+      },
+      "additionalProperties": false
+    },
+    "failures": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["ruleId", "severity", "message"],
+        "properties": {
+          "ruleId": { "type": "string" },
+          "severity": {
+            "type": "string",
+            "enum": ["critical", "high", "medium", "low"]
+          },
+          "message": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}
