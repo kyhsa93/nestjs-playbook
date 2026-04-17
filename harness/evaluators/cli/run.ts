@@ -2,19 +2,22 @@ import { evaluateLayerDependency } from '../rules/layer-dependency.evaluator'
 import { evaluateRepositoryPattern } from '../rules/repository-pattern.evaluator'
 import { evaluateControllerPath } from '../rules/controller-path.evaluator'
 import { evaluateChecklist } from '../rules/checklist.evaluator'
+import { evaluateStructure } from '../rules/structure.evaluator'
 import { aggregate } from '../shared/score'
 
-const root = process.argv[2]
+const taskRoot = process.argv[2]
+const submissionRoot = process.argv[3]
 
-if (!root) {
-  throw new Error('usage: node run.js <projectRoot>')
+if (!submissionRoot) {
+  throw new Error('usage: node run.js <taskRoot> <submissionRoot>')
 }
 
 const results = [
-  evaluateLayerDependency(root),
-  evaluateRepositoryPattern(root),
-  evaluateControllerPath(root),
-  evaluateChecklist(root)
+  evaluateStructure(submissionRoot),
+  evaluateLayerDependency(submissionRoot),
+  evaluateRepositoryPattern(submissionRoot),
+  evaluateControllerPath(submissionRoot),
+  evaluateChecklist(submissionRoot)
 ]
 
 const { total, breakdown, failures } = aggregate(results)
@@ -28,7 +31,7 @@ function grade(score: number) {
 }
 
 const report = {
-  taskId: 'ad-hoc',
+  taskId: taskRoot || 'ad-hoc',
   totalScore: total,
   grade: grade(total),
   breakdown,
