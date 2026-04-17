@@ -18,7 +18,9 @@ export function aggregate(results: EvaluatorResult[]) {
     failures.push(...r.failures)
 
     if (r.name.includes('structure')) breakdown.structure += r.score
-    if (r.name.includes('layer') || r.name.includes('repository')) breakdown.architecture += r.score
+    if (r.name.includes('layer') || r.name.includes('repository') || r.name.includes('checklist')) {
+      breakdown.architecture += r.score
+    }
     if (r.name.includes('controller')) breakdown.api += r.score
   }
 
