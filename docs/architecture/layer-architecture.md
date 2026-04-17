@@ -192,6 +192,7 @@ providers: [
 - **Repository**는 Command Service에서만 사용한다. Aggregate 단위의 조회/저장을 담당한다.
 - **Query 인터페이스**는 Query Service에서만 사용한다. 읽기에 최적화된 조회를 담당하며, Aggregate 복원이 불필요하다.
 - Controller에서는 쓰기 요청은 Command Service를, 읽기 요청은 Query Service를 호출한다.
+- `@nestjs/cqrs` 모듈을 사용하여 Command/Query Bus 기반으로 전환할 수 있다. 상세 패턴은 [cqrs-pattern.md](cqrs-pattern.md) 참조.
 
 ### Infrastructure 레이어 역할
 

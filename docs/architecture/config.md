@@ -147,3 +147,4 @@ export class SomeInfraService {
 
 - `ConfigService`는 `isGlobal: true`로 등록했으므로 별도 모듈 import 없이 주입 가능하다.
 - 설정 값 접근 시 닷 노테이션(`'database.host'`)으로 네스팅된 값에 접근한다.
+- 프로덕션 환경에서 DB 비밀번호, API 키 등 민감한 값은 환경 변수 대신 AWS Secrets Manager를 사용한다. 상세 패턴은 [secret-manager.md](secret-manager.md) 참조.

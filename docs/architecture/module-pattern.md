@@ -69,6 +69,8 @@ export class AppModule {}
 
 ### 모듈 간 의존 — Adapter를 통한 외부 도메인 호출
 
+> 크로스 도메인 호출의 개념과 원칙은 [cross-domain.md](cross-domain.md)를 참조한다. 이 섹션에서는 모듈 등록 중심으로 설명한다.
+
 다른 도메인의 기능이 필요할 때, **해당 도메인의 Service나 Repository를 직접 주입하지 않는다.** 대신 Application 레이어에 Adapter 인터페이스(abstract class)를 정의하고, Infrastructure 레이어에서 실제 외부 도메인 모듈을 호출하는 구현체를 작성한다.
 
 **이유:**

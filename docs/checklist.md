@@ -321,6 +321,13 @@
 [ ] 인증 성공 시 request.user에 사용자 정보가 할당되는가?
 [ ] Guard/Interceptor가 메서드 레벨이 아닌 클래스 레벨에 적용되어 있는가?
 [ ] Controller 클래스에 private readonly logger = new Logger(XxxController.name)가 있는가?
+[ ] Domain 레이어에서 Logger를 사용하고 있지 않은가?
+    → Domain 레이어는 프레임워크 무의존. 로깅은 Application 레이어에서 수행
+[ ] Cron 작업(@Cron, @Interval)이 Infrastructure 레이어에 배치되어 있는가?
+    → Application/Domain 레이어에 스케줄링 데코레이터 사용 금지
+[ ] Cron 작업이 비즈니스 로직을 직접 수행하지 않고 Application Service에 위임하는가?
+[ ] Cron 작업이 try-catch로 감싸져 있는가?
+    → 예외 발생 시 프로세스가 종료되지 않도록 에러를 로깅만 한다
 ```
 
 ---
@@ -370,6 +377,9 @@
     → 운영 DB에 직접 연결하지 않는다
 [ ] Aggregate 불변식 위반 테스트가 작성되어 있는가? (잘못된 입력 → 예외 발생)
 [ ] Domain Event 발행 여부를 검증하는 테스트가 있는가?
+[ ] Domain 단위 테스트가 소스 파일과 같은 디렉토리에 .spec.ts로 배치되어 있는가?
+[ ] E2E 테스트가 test/ 디렉토리에 .e2e-spec.ts로 배치되어 있는가?
+[ ] 테스트 네이밍이 {도메인행위}_when_{조건}_then_{기대결과} 패턴을 따르는가?
 ```
 
 ---
