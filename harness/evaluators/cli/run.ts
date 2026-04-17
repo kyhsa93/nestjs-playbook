@@ -6,6 +6,10 @@ import { evaluateRepositoryPattern } from '../rules/repository-pattern.evaluator
 import { evaluateControllerPath } from '../rules/controller-path.evaluator'
 import { evaluateChecklist } from '../rules/checklist.evaluator'
 import { evaluateStructure } from '../rules/structure.evaluator'
+import { evaluateCqrsPattern } from '../rules/cqrs-pattern.evaluator'
+import { evaluateErrorHandling } from '../rules/error-handling.evaluator'
+import { evaluateTestPresence } from '../rules/test-presence.evaluator'
+import { evaluateDtoValidation } from '../rules/dto-validation.evaluator'
 import { aggregate } from '../shared/score'
 
 const taskRoot = process.argv[2]
@@ -20,7 +24,11 @@ const results = [
   evaluateLayerDependency(submissionRoot),
   evaluateRepositoryPattern(submissionRoot),
   evaluateControllerPath(submissionRoot),
-  evaluateChecklist(submissionRoot)
+  evaluateChecklist(submissionRoot),
+  evaluateCqrsPattern(submissionRoot),
+  evaluateErrorHandling(submissionRoot),
+  evaluateTestPresence(submissionRoot),
+  evaluateDtoValidation(submissionRoot)
 ]
 
 const { total, breakdown, failures } = aggregate(results)
