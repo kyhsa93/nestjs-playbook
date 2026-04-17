@@ -18,18 +18,49 @@ export function walkTsFiles(dir: string, files: string[] = []): string[] {
   return files
 }
 
-export function parseImports(filePath: string): string[] {
+export function readSourceFile(filePath: string): ts.SourceFile {
   const source = fs.readFileSync(filePath, 'utf-8')
-  const sf = ts.createSourceFile(filePath, source, ts.ScriptTarget.Latest, true)
-  const imports: string[] = []
+  return ts.createSourceFile(filePath, source, ts.ScriptTarget.Latest, true)
+}
 
+export function parseImports(filePath: string): string[] {
+  const sf = readSourceFile(filePath)
+  const imports: string[] = []
   sf.forEachChild((node) => {
     if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
       imports.push(node.moduleSpecifier.text)
     }
   })
-
   return imports
+}
+
+export function getDecoratorTexts(filePath: string): string[] {
+  const sf = readSourceFile(filePath)
+  const decorators: string[] = []
+  function visit(node: ts.Node) {
+    const mods = (node as ts.Node & { modifiers?: ts.NodeArray<ts.ModifierLike> }).modifiers
+    if (mods) {
+      for (const mod of mods) {
+        if (ts.isDecorator(mod)) decorators.push(mod.getText(sf))
+      }
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(sf)
+  return decorators
+}
+
+export function hasProviderArray(filePath: string): boolean {
+  const sf = readSourceFile(filePath)
+  let found = false
+  function visit(node: ts.Node) {
+    if (ts.isPropertyAssignment(node) && node.name.getText(sf) === 'providers') {
+      found = true
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(sf)
+  return found
 }
 
 export function classifyLayer(filePath: string): 'domain' | 'application' | 'interface' | 'infrastructure' | 'unknown' {
