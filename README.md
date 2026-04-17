@@ -2,6 +2,8 @@
 
 AI Agent가 NestJS TypeScript 서버 프로젝트를 도메인 주도 설계 기반으로 설계하고 구현할 때 따라야 하는 통합 가이드입니다.
 
+> This repository includes a **NestJS architecture playbook + AI evaluation harness**
+
 ## 프로젝트 구조
 
 ```
@@ -39,6 +41,53 @@ CLAUDE.md                              ← Claude Code 진입점
 각 AI 도구의 진입점 파일은 `docs/` 참조 포인터를 담는다.
 아키텍처 가이드는 주제별로 분리되어 있어, 작업에 필요한 파일만 참조하면 된다.
 
+## 🧪 AI Agent Evaluation Harness
+
+이 레포는 단순한 NestJS 가이드가 아니라, AI Agent가 생성한 코드를 자동으로 평가할 수 있는 **하네스(harness)** 를 포함합니다.
+
+### What is Harness?
+
+- task 기반 코드 생성 문제 정의
+- 코드 구조 및 아키텍처 평가
+- 규칙 기반 점수 산출
+- 실패 원인 리포트 생성
+
+### Structure
+
+```
+harness/
+  tasks/
+  evaluators/
+  shared/
+```
+
+### How to Run
+
+```bash
+node harness/evaluators/cli/run.js <taskRoot> <submissionRoot>
+```
+
+### Output Example
+
+```json
+{
+  "taskId": "new-domain/domain-module-basic",
+  "totalScore": 82,
+  "grade": "B"
+}
+```
+
+### What is Evaluated?
+
+- Layer dependency
+- Repository pattern
+- Module DI
+- Controller / API design
+- DTO validation
+- Error handling
+- CQRS 구조
+- 테스트 존재 여부
+
 ## 사용 방법
 
 ### 새 프로젝트를 시작하는 경우
@@ -59,31 +108,30 @@ CLAUDE.md                              ← Claude Code 진입점
 ```
 src/
   <domain>/
-    domain/           ← 도메인 레이어 (비즈니스 규칙, Aggregate, Repository 인터페이스)
-    application/      ← 애플리케이션 레이어 (유스케이스 조율, Service)
-    interface/        ← 인터페이스 레이어 (Controller, DTO)
-    infrastructure/   ← 인프라 레이어 (Repository 구현체, 외부 연동)
+    domain/
+    application/
+    interface/
+    infrastructure/
 ```
 
-- **도메인 우선 디렉토리 구조**: `src/<domain>/` 하위에 4개 레이어를 배치한다.
-- **Domain 레이어**: Aggregate Root에 비즈니스 규칙과 불변식을 캡슐화한다. 프레임워크에 의존하지 않는다.
-- **Aggregate Root 단위 Repository**: Repository 인터페이스는 domain 레이어에, 구현체는 infrastructure 레이어에 배치한다.
-- **Application Service는 조율자**: 비즈니스 로직은 도메인 객체에 위임하고, Service는 트랜잭션/이벤트/Repository 호출을 조율한다.
+- 도메인 우선 구조
+- Domain 레이어는 프레임워크 비의존
+- Repository는 domain interface + infra 구현
+- Application은 조율자
 
 ## 가이드 관리 원칙
 
 ### 작성 언어
-- 가이드의 모든 설명과 본문은 한글로 작성한다.
-- 코드 예시 내부의 식별자(변수명, 클래스명, 메서드명 등)와 TypeScript 키워드는 영문을 사용한다.
+- 가이드는 한글
+- 코드 식별자는 영문
 
 ### 예시 작성 및 검토 의무
-가이드에 새 규칙을 추가하거나 기존 규칙을 수정할 때는 반드시 아래 절차를 따른다.
-1. 규칙을 보여주는 올바른 예시(`// 올바른 방식`)와 잘못된 예시(`// 잘못된 방식`)를 함께 작성한다.
-2. 예시가 가이드 전체 규칙에 부합하는지 검토한다.
-3. 위반이 발견되면 예시를 수정한 뒤 규칙을 확정한다.
+1. 올바른/잘못된 예시 작성
+2. 전체 규칙과 일치 검증
+3. 위반 시 수정
 
 ### 변경 후 반영 절차
-1. `main` 브랜치에서 Conventional Branch 규칙에 따라 새 브랜치를 생성한다.
-2. 변경 사항을 commit한다 (Conventional Commits 형식).
-3. `main` 브랜치로 Pull Request를 생성한다.
-4. 상세한 브랜치/커밋/PR 규칙은 [docs/conventions.md](docs/conventions.md) 섹션 10~11을 참조한다.
+1. main 기준 브랜치 생성
+2. commit
+3. PR 생성
+4. conventions.md 참조
