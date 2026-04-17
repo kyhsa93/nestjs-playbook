@@ -3,6 +3,8 @@ import * as path from 'node:path'
 
 import { EvaluatorResult, EvaluatorFailure } from '../shared/types'
 
+const VERB_PREFIXES = ['create', 'get', 'update', 'delete', 'set', 'add', 'remove']
+
 export function evaluateControllerPath(root: string): EvaluatorResult {
   const failures: EvaluatorFailure[] = []
   let score = 25
@@ -20,13 +22,16 @@ export function evaluateControllerPath(root: string): EvaluatorResult {
   for (const file of files) {
     const content = fs.readFileSync(file, 'utf-8')
 
-    if (content.includes("@Controller('create") || content.includes("@Controller('get")) {
-      failures.push({
-        ruleId: 'controller.path.naming',
-        severity: 'medium',
-        message: `동사형 path 금지: ${file}`
-      })
-      score -= 5
+    for (const verb of VERB_PREFIXES) {
+      if (content.includes(`@Controller('${verb}`)) {
+        failures.push({
+          ruleId: 'controller.path.no-verb-prefix',
+          severity: 'medium',
+          message: `동사형 path 금지 (${verb}): ${file}`
+        })
+        score -= 5
+        break
+      }
     }
   }
 

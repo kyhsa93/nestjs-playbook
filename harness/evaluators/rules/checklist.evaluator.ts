@@ -23,17 +23,17 @@ export function evaluateChecklist(root: string): EvaluatorResult {
     const content = fs.readFileSync(file, 'utf-8')
 
     if (file.includes('/domain/') && content.includes('@Injectable(')) {
-      failures.push({ ruleId: 'domain-no-decorator', severity: 'high', message: file })
+      failures.push({ ruleId: 'checklist.step2.domain.no-decorator', severity: 'high', message: file })
       score -= 8
     }
 
     if (file.includes('/application/') && content.includes('HttpException')) {
-      failures.push({ ruleId: 'app-no-http-exception', severity: 'high', message: file })
+      failures.push({ ruleId: 'checklist.step3.application.no-http-exception', severity: 'high', message: file })
       score -= 8
     }
 
     if (content.includes('TODO')) {
-      failures.push({ ruleId: 'no-todo', severity: 'low', message: file })
+      failures.push({ ruleId: 'checklist.step14.no-todo', severity: 'low', message: file })
       score -= 2
     }
   }

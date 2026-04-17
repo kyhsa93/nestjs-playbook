@@ -1,3 +1,6 @@
+import * as fs from 'node:fs'
+import * as path from 'node:path'
+
 import { evaluateLayerDependency } from '../rules/layer-dependency.evaluator'
 import { evaluateRepositoryPattern } from '../rules/repository-pattern.evaluator'
 import { evaluateControllerPath } from '../rules/controller-path.evaluator'
@@ -9,7 +12,7 @@ const taskRoot = process.argv[2]
 const submissionRoot = process.argv[3]
 
 if (!submissionRoot) {
-  throw new Error('usage: node run.js <taskRoot> <submissionRoot>')
+  throw new Error('usage: node harness/evaluators/cli/run.js <taskRoot> <submissionRoot>')
 }
 
 const results = [
@@ -30,8 +33,22 @@ function grade(score: number) {
   return 'F'
 }
 
+function resolveTaskId(inputTaskRoot?: string): string {
+  if (!inputTaskRoot) return 'ad-hoc'
+
+  const metadataPath = path.join(inputTaskRoot, 'metadata.json')
+  if (!fs.existsSync(metadataPath)) return inputTaskRoot
+
+  try {
+    const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8')) as { id?: string }
+    return metadata.id || inputTaskRoot
+  } catch {
+    return inputTaskRoot
+  }
+}
+
 const report = {
-  taskId: taskRoot || 'ad-hoc',
+  taskId: resolveTaskId(taskRoot),
   totalScore: total,
   grade: grade(total),
   breakdown,

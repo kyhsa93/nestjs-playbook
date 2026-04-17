@@ -34,7 +34,7 @@ export function evaluateRepositoryPattern(root: string): EvaluatorResult {
     }
 
     if (file.includes('/application/') && content.includes('Repository')) {
-      if (content.includes('new ') || content.includes('TypeORM')) {
+      if (content.includes('new ') || content.includes('typeorm')) {
         failures.push({
           ruleId: 'repository.no-direct-instantiation',
           severity: 'high',
