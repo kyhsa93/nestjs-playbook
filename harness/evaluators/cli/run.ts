@@ -1,6 +1,7 @@
 import { evaluateLayerDependency } from '../rules/layer-dependency.evaluator'
 import { evaluateRepositoryPattern } from '../rules/repository-pattern.evaluator'
 import { evaluateControllerPath } from '../rules/controller-path.evaluator'
+import { evaluateChecklist } from '../rules/checklist.evaluator'
 import { aggregate } from '../shared/score'
 
 const root = process.argv[2]
@@ -12,7 +13,8 @@ if (!root) {
 const results = [
   evaluateLayerDependency(root),
   evaluateRepositoryPattern(root),
-  evaluateControllerPath(root)
+  evaluateControllerPath(root),
+  evaluateChecklist(root)
 ]
 
 const { total, breakdown, failures } = aggregate(results)
