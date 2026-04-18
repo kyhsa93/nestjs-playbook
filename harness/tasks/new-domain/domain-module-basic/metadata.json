@@ -1,1 +1,0 @@
-{"id":"new-domain/domain-module-basic","category":"new-domain","difficulty":"medium","workflow":["RA","DM","TD","TE","IM","VA"],"requires":["directory-structure","repository-pattern"],"scoringProfile":"default"}

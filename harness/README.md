@@ -1,27 +1,20 @@
-# Harness
+# Harness — nestjs-playbook 가이드 규칙 linter
 
-이 디렉토리는 `nestjs-playbook`의 평가 하네스를 담는다.
+`docs/`의 가이드 규칙 중 **기계 검증 가능한 항목**을 외부 NestJS 프로젝트에 적용하는 정적 분석 도구.
+각 evaluator는 TypeScript AST·파일 경로·정규식을 조합해 규칙 위반을 검출한다.
 
-## 목적
+## 구조
 
-- AI Agent에게 NestJS DDD 과제를 부여한다.
-- 산출물을 구조/규칙/실행/아키텍처 기준으로 평가한다.
-- 0~100 점수 리포트를 생성한다.
-
-## 핵심 원칙
-
-- 하네스는 특정 비즈니스 도메인을 평가하지 않는다.
-- 과제는 도메인 중립적으로 설계한다.
-- 문서 내 비즈니스 예시는 설명용일 뿐이다.
-
-## 디렉토리
-
-```text
-package.json   의존성(tsx, typescript, @types/node)
-tsconfig.json  TypeScript 설정
-tasks/         과제 정의 (metadata + task.md + assertions)
-evaluators/    자동 평가기 (rules/, ast 기반 유틸 shared/)
-tests/         evaluator 회귀 fixture & 러너
+```
+harness/
+  evaluators/
+    rules/              18개 evaluator (structure, layer-dependency, ...)
+    shared/             types, score, ast-utils, penalty, workspace
+    cli/run.ts          CLI 엔트리
+  tests/
+    fixtures/<name>/<case>/   회귀 fixture (expected.json 기반)
+    run-fixtures.ts           러너
+  package.json · tsconfig.json
 ```
 
 ## 설치
@@ -31,47 +24,132 @@ cd harness
 npm install
 ```
 
-## 실행
-
-과제 루트와 제출물 루트를 지정하여 평가를 실행한다.
+## 사용
 
 ```bash
-# tsx로 직접 실행
-npm run evaluate -- <taskRoot> <submissionRoot>
+# 대상 NestJS 프로젝트 전체 평가
+npm run evaluate -- /path/to/your-nestjs-project
 
-# 예: 현재 프로젝트 자체를 평가
-npm run evaluate -- tasks/new-domain/domain-module-basic ..
+# 특정 evaluator만
+npm run evaluate -- /path/to/project --only=structure,layer-dependency,task-queue
+
+# 파일 출력
+npm run evaluate -- /path/to/project --out=report.json
 ```
 
-출력은 0-100 정규화 점수, 등급(A–F), 카테고리별 breakdown, 실패 항목, 해당 제출물에 적용되지 않아 평가에서 제외된 evaluator 목록을 JSON으로 담는다.
-
+출력(JSON):
 ```json
 {
-  "taskId": "new-domain/domain-module-basic",
+  "projectRoot": "/abs/path",
   "totalScore": 87,
   "grade": "B",
-  "rawScore": 275,
-  "rawMax": 315,
-  "breakdown": { "structure": 25, "architecture": 190, "api": 25, "testing": 25, "semantics": 25, "runtime": 0 },
-  "breakdownMax": { "structure": 25, "architecture": 215, "api": 25, "testing": 25, "semantics": 25, "runtime": 0 },
-  "skippedEvaluators": ["task-queue", "scheduler", "deprecated-api"],
-  "failures": [ /* ... */ ]
+  "rawScore": 267,
+  "rawMax": 305,
+  "runEvaluators": ["structure", "layer-dependency", "..."],
+  "skippedEvaluators": ["task-queue", "scheduler"],
+  "failures": [
+    {
+      "ruleId": "repository.abstract-class",
+      "severity": "high",
+      "message": "repository는 abstract class여야 함: src/order/domain/order-repository.ts",
+      "docRef": "docs/architecture/repository-pattern.md"
+    }
+  ]
 }
 ```
 
-- **totalScore**: `rawScore / rawMax * 100` 정규화. 등급 매핑은 `grade()`에서 0-100 기준.
-- **skippedEvaluators**: 제출물에 해당 관심사 관련 코드가 없어 maxScore=0으로 평가에서 제외된 evaluator (예: `@TaskConsumer`가 없으면 task-queue 제외).
+각 failure의 `docRef`는 해당 규칙을 설명하는 가이드 문서 상대 경로. 에이전트·개발자는 이 링크를 열어 수정 방향을 확인한다.
 
-## Type 체크
+## Evaluator 목록
+
+| 이름 | 역할 | maxScore |
+|------|------|----------|
+| `structure` | 4레이어 디렉토리 + `src/task-queue/` 조건부 | 25 |
+| `layer-dependency` | Domain에 NestJS/TypeORM 금지 등 | 25 |
+| `repository-pattern` | abstract class 여부, 직접 인스턴스화 금지 | 25 |
+| `controller-path` | `@Controller('create…')` 같은 동사 prefix 금지 | 25 |
+| `checklist` | `docs/checklist.md` 기반 기계 룰 모음 | 100 |
+| `cqrs-pattern` | `command/`·`query/` 분리, Query에서 Repository 미사용 | 25 |
+| `error-handling` | Domain에 HttpException 금지, Application에 throw new Error() 금지 | 25 |
+| `test-presence` | `test/` 또는 `*.spec.ts` 존재 | 25 |
+| `dto-validation` | DTO에 `class-validator` 데코레이터 부착 | 25 |
+| `task-queue` | `@TaskConsumer` 사용 시 Interface 레이어, CommandService 주입 등 | 20 *(auto-gated)* |
+| `scheduler` | `@Cron` 사용 시 Infrastructure 레이어, try-catch | 15 *(auto-gated)* |
+| `deprecated-api` | deprecated/legacy 경로에 `@ApiOperation({ deprecated: true })` | 10 *(auto-gated)* |
+| `module-di-ast` | `@Module`에 providers 배열 존재 | 25 |
+| `import-graph` | domain → infrastructure import 금지 | 25 |
+| `domain-event-outbox` | Aggregate가 이벤트 발행 시 Outbox 연동 | 15 *(auto-gated)* |
+| `build` | `tsc --noEmit` 실행 (tsconfig 존재 시) | 25 *(auto-gated)* |
+| `test-run` | `npm test` 실행 (`HARNESS_ENABLE_TEST_RUN=1`) | 20 *(opt-in)* |
+
+*auto-gated*: 해당 기능을 사용하는 코드가 없으면 `maxScore=0`으로 집계에서 제외.
+*opt-in*: 환경 변수 명시 시에만 실행.
+
+## Type 체크 / 회귀 테스트
 
 ```bash
-npm run typecheck
+npm run typecheck          # evaluator TypeScript 검증
+npm run test:evaluators    # tests/fixtures/ 기반 회귀
 ```
 
-## Evaluator 회귀 테스트
-
-```bash
-npm run test:evaluators
+회귀 fixture 구조:
+```
+tests/fixtures/<evaluator>/<case>/
+  src/                   (최소 NestJS 소스 — 컴파일 안 해도 됨)
+  expected.json          { name, applicable, expectedFailureRuleIds }
 ```
 
-`tests/fixtures/<evaluator>/<case>/` 에 준비된 미니 NestJS 프로젝트에 대해 각 evaluator를 호출하고, `expected.json`과 실패 목록을 비교한다.
+## 점수 산정
+
+- 각 evaluator는 `{ score, maxScore }` 반환.
+- `aggregate()`가 `sumScore / sumMax * 100`으로 **0–100 정규화**.
+- 적용 불가(maxScore=0) evaluator는 집계에서 제외.
+- 등급: A ≥ 90, B ≥ 80, C ≥ 70, D ≥ 60, F < 60.
+
+Severity → 감점 기본 매핑 (`shared/penalty.ts`):
+
+| severity | base penalty |
+|----------|--------------|
+| critical | 6 |
+| high     | 4 |
+| medium   | 2 |
+| low      | 1 |
+
+## CI 통합
+
+프로젝트 `.github/workflows/`에 추가:
+
+```yaml
+- run: |
+    cd /path/to/harness
+    npm ci
+    npm run evaluate -- ${{ github.workspace }} --out=report.json
+    # 점수 임계 검사
+    node -e "if (JSON.parse(require('fs').readFileSync('report.json')).totalScore < 80) process.exit(1)"
+```
+
+## 기여
+
+### 새 evaluator 추가
+
+1. `evaluators/rules/<name>.evaluator.ts` 작성
+   - `export function evaluate<Name>(root: string): EvaluatorResult` 시그니처
+   - 적용 대상 없으면 `{ score: 0, maxScore: 0, failures: [] }` 반환 (auto-gate)
+   - 실패엔 가능하면 `docRef`(가이드 경로) 포함
+   - 감점은 `shared/penalty.ts`의 `penaltyFor(severity)` 권장
+   - AST가 필요하면 `shared/ast-utils.ts`(`listMethodDecorators`, `listConstructorParams`, `findClassDecorator` 등)
+2. `evaluators/cli/run.ts`의 `EVALUATORS` map에 등록
+3. `evaluators/shared/score.ts`의 breakdown 라우팅에 카테고리 추가 (`architecture` / `api` / `testing` / `runtime`)
+4. `tests/fixtures/<name>/<case>/` fixture 작성 (`good` + 최소 1개 `bad-*`)
+5. `npm run typecheck && npm run test:evaluators`
+
+### docRef 규약
+
+- 실패가 특정 문서에 대응될 때 `docRef: 'docs/architecture/<file>.md#<anchor>'` 형식.
+- 앵커는 GitHub 생성 규칙(소문자, 공백 → `-`). 한글 지원되지만 em-dash(—)는 제거되어 이중 `--` 발생 가능.
+- 작성 후 실제 렌더링 링크가 유효한지 반드시 로컬에서 확인.
+
+## 관련
+
+- 가이드 진입점: [`CLAUDE.md`](../CLAUDE.md) (상위 루트) — 작업/키워드 → 문서 매핑.
+- 규칙 설명: `docs/architecture/*.md` — evaluator가 검증하는 원리.

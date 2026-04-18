@@ -1,5 +1,14 @@
 # Scheduling / Batch 작업
 
+> **이 문서 성격**: 여기 기술한 `@TaskConsumer` + `TaskQueue` + `TaskOutbox` 전체 구조는 **한 가지 구현 예시**다. 본 가이드가 강제하는 유일한 방식이 아니며, 팀 상황에 따라 더 단순하게 시작해도 된다. 단순 `@Cron` 하나·단일 SQS consumer 한 개·외부 큐 서비스(BullMQ, SideKiq 등) 사용도 모두 유효한 선택지. 이 문서는 **대규모·다중 인스턴스·트랜잭션 정합성이 중요한 케이스의 참고 설계**로 읽는다.
+>
+> **최소 요구**는 다음 세 가지만:
+> - Scheduler는 **Infrastructure 레이어**에 둔다 (`@Cron` 데코레이터 위치).
+> - Task 핸들러(어떤 형태든)는 **멱등**하다.
+> - SQS를 쓴다면 **FIFO + DLQ**를 기본으로 한다.
+>
+> 아래 상세 구조는 이 최소 요구 위에 쌓은 **완성된 구현 예시**로 참고한다.
+
 주기적 작업과 배치 처리는 **AWS SQS 기반 Task Queue** 방식으로 구현한다. Scheduler가 Cron 주기로 SQS에 Task 메시지를 적재(produce)하고, **Task Controller의 메서드가 `@TaskConsumer` 데코레이터로 구독**하여 해당 Task가 도착하면 메서드가 실행되는 구조다. Task Controller는 Command Service를 주입받아 Task에 해당하는 Command를 실행한다.
 
 ```

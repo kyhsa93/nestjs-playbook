@@ -46,7 +46,8 @@ export function evaluateDomainEventOutbox(root: string): EvaluatorResult {
     failures.push({
       ruleId: 'domain-event-outbox.module-missing',
       severity: 'high',
-      message: `Domain Events(${aggregatesWithEvents.length}개 Aggregate)이 발행되는데 src/outbox/ 공유 모듈 부재 — Outbox 패턴 구성 필요`
+      message: `Domain Events(${aggregatesWithEvents.length}개 Aggregate)이 발행되는데 src/outbox/ 공유 모듈 부재 — Outbox 패턴 구성 필요`,
+      docRef: 'docs/architecture/domain-events.md'
     })
     score -= 6
   }

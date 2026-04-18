@@ -179,3 +179,14 @@ export class LoggingInterceptor implements NestInterceptor {
 - **에러는 `logger.error()`로**: catch 블록에서 반드시 에러를 로깅한 뒤 예외를 던진다.
 - **프로덕션에서 debug/verbose 비활성화**: 환경별 로그 레벨을 설정하여 불필요한 로그를 차단한다.
 - **Correlation ID로 요청 추적**: 분산 환경에서는 모든 로그에 Correlation ID를 포함한다.
+
+## 메트릭·트레이싱 (메모)
+
+본 가이드는 특정 observability 스택을 강제하지 않는다. 운영 환경에서 다음을 고려한다.
+
+- **메트릭**: 일반적으로 Prometheus(`/metrics` 엔드포인트 + 스크레이프). NestJS에서는 `@willsoto/nestjs-prometheus` 같은 패키지로 통합 가능.
+- **트레이싱**: OpenTelemetry auto-instrumentation으로 HTTP/TypeORM/SQS span을 자동 수집. Task Queue를 쓰는 경우 `traceparent`를 `task_outbox`에 실어 Task 경계에서 context를 전파하면 HTTP 요청 → Task 처리가 단일 trace로 묶인다.
+- **알람 최우선 항목**: DLQ depth > 0, SQS `ApproximateAgeOfOldestMessage`, HTTP 5xx rate, p99 지연, DB 커넥션 풀 포화.
+- **로그 ↔ 트레이스 상관관계**: log 레코드에 `trace_id`를 포함시켜 trace → log 점프 가능하도록 한다.
+
+구체 구현은 각 스택의 공식 문서 및 팀 컨벤션에 따른다.

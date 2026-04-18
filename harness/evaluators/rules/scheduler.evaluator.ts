@@ -53,7 +53,8 @@ export function evaluateScheduler(root: string): EvaluatorResult {
       failures.push({
         ruleId: 'scheduler.layer',
         severity: 'high',
-        message: `@Cron 사용 Scheduler가 infrastructure/ 외 레이어(${layer})에 위치: ${rel(file)}`
+        message: `@Cron 사용 Scheduler가 infrastructure/ 외 레이어(${layer})에 위치: ${rel(file)}`,
+        docRef: 'docs/architecture/scheduling.md#scheduler--cron--taskqueue'
       })
       score -= 4
     }
@@ -77,7 +78,8 @@ export function evaluateScheduler(root: string): EvaluatorResult {
         failures.push({
           ruleId: 'scheduler.cron.try-catch',
           severity: 'medium',
-          message: `Cron 메서드 ${m.methodName}에 try-catch(또는 runSafely 헬퍼) 부재: ${rel(file)} — @nestjs/schedule이 예외를 삼킴`
+          message: `Cron 메서드 ${m.methodName}에 try-catch(또는 runSafely 헬퍼) 부재: ${rel(file)} — @nestjs/schedule이 예외를 삼킴`,
+          docRef: 'docs/architecture/scheduling.md#scheduler--cron--taskqueue'
         })
         score -= 2
       }

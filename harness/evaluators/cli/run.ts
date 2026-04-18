@@ -1,13 +1,14 @@
-// Harness CLI runner.
+// Harness CLI — nestjs-playbook 가이드 규칙을 대상 NestJS 프로젝트에 적용하는 linter.
 //
 // Usage:
-//   npm run evaluate -- <taskRoot> <submissionRoot> [--only=a,b,c] [--out=path]
+//   npm run evaluate -- <projectRoot> [--only=a,b,c] [--out=path]
 //
 // Flags:
-//   --only=<names>   comma-separated evaluator names to run (see EVALUATORS
-//                    below). Others are skipped entirely. Useful for iterating
-//                    on a single rule.
-//   --out=<path>     write the JSON report to the given file instead of stdout.
+//   --only=<names>   쉼표로 구분된 evaluator 이름. 해당만 실행. (규칙 이름은 --help 참조)
+//   --out=<path>     stdout 대신 파일에 JSON 리포트 기록.
+//   --help, -h       사용법 + evaluator 목록 출력.
+//
+// 출력은 JSON. 각 failure에 `docRef` 필드가 포함되어 있으면 관련 가이드 문서 URL.
 
 import * as fs from 'node:fs'
 import * as path from 'node:path'
@@ -53,8 +54,7 @@ const EVALUATORS: Record<string, (root: string) => EvaluatorResult> = {
 }
 
 interface Args {
-  taskRoot: string | undefined
-  submissionRoot: string | undefined
+  projectRoot: string | undefined
   only: string[] | null
   outFile: string | null
 }
@@ -75,12 +75,12 @@ function parseArgs(argv: string[]): Args {
       positional.push(arg)
     }
   }
-  return { taskRoot: positional[0], submissionRoot: positional[1], only, outFile }
+  return { projectRoot: positional[0], only, outFile }
 }
 
 function printHelpAndExit(code: number): never {
   console.log([
-    'usage: npm run evaluate -- <taskRoot> <submissionRoot> [--only=a,b,c] [--out=path]',
+    'usage: npm run evaluate -- <projectRoot> [--only=a,b,c] [--out=path]',
     '',
     'Available evaluators:',
     ...Object.keys(EVALUATORS).map((n) => `  - ${n}`)
@@ -88,9 +88,9 @@ function printHelpAndExit(code: number): never {
   process.exit(code)
 }
 
-const { taskRoot, submissionRoot, only, outFile } = parseArgs(process.argv.slice(2))
+const { projectRoot, only, outFile } = parseArgs(process.argv.slice(2))
 
-if (!submissionRoot) {
+if (!projectRoot) {
   printHelpAndExit(1)
 }
 
@@ -105,7 +105,7 @@ if (only) {
 }
 
 const selectedNames = only ?? Object.keys(EVALUATORS)
-const results: EvaluatorResult[] = selectedNames.map((name) => EVALUATORS[name](submissionRoot!))
+const results: EvaluatorResult[] = selectedNames.map((name) => EVALUATORS[name](projectRoot!))
 const { total, rawScore, rawMax, breakdown, breakdownMax, failures, skippedEvaluators } = aggregate(results)
 
 function grade(score: number): string {
@@ -116,20 +116,8 @@ function grade(score: number): string {
   return 'F'
 }
 
-function resolveTaskId(inputTaskRoot?: string): string {
-  if (!inputTaskRoot) return 'ad-hoc'
-  const metadataPath = path.join(inputTaskRoot, 'metadata.json')
-  if (!fs.existsSync(metadataPath)) return inputTaskRoot
-  try {
-    const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8')) as { id?: string }
-    return metadata.id || inputTaskRoot
-  } catch {
-    return inputTaskRoot
-  }
-}
-
 const report = {
-  taskId: resolveTaskId(taskRoot),
+  projectRoot: path.resolve(projectRoot!),
   totalScore: total,
   grade: grade(total),
   rawScore,

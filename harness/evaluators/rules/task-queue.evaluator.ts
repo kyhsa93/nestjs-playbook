@@ -94,7 +94,8 @@ export function evaluateTaskQueue(root: string): EvaluatorResult {
       failures.push({
         ruleId: 'task-queue.controller.layer',
         severity: 'high',
-        message: `Task Controller(@TaskConsumer 보유)가 interface/ 외 레이어(${layer})에 위치: ${rel(file)}`
+        message: `Task Controller(@TaskConsumer 보유)가 interface/ 외 레이어(${layer})에 위치: ${rel(file)}`,
+        docRef: 'docs/architecture/scheduling.md#taskcontroller--taskconsumer-메서드로-command-실행-interface-레이어'
       })
       score -= 5
     }
@@ -104,7 +105,8 @@ export function evaluateTaskQueue(root: string): EvaluatorResult {
       failures.push({
         ruleId: 'task-queue.controller.file-suffix',
         severity: 'medium',
-        message: `@TaskConsumer 보유 파일은 *-task-controller.ts 형식이어야 함: ${rel(file)}`
+        message: `@TaskConsumer 보유 파일은 *-task-controller.ts 형식이어야 함: ${rel(file)}`,
+        docRef: 'docs/architecture/scheduling.md#레이어-배치'
       })
       score -= 2
     }
@@ -121,7 +123,8 @@ export function evaluateTaskQueue(root: string): EvaluatorResult {
         failures.push({
           ruleId: 'task-queue.controller.no-datasource',
           severity: 'high',
-          message: `Task Controller가 DataSource를 직접 주입: ${rel(file)} (CommandService 또는 idempotencyKey 옵션 사용)`
+          message: `Task Controller가 DataSource를 직접 주입: ${rel(file)} (CommandService 또는 idempotencyKey 옵션 사용)`,
+          docRef: 'docs/architecture/scheduling.md#taskcontroller--taskconsumer-메서드로-command-실행-interface-레이어'
         })
         score -= 4
       }
@@ -129,7 +132,8 @@ export function evaluateTaskQueue(root: string): EvaluatorResult {
         failures.push({
           ruleId: 'task-queue.controller.no-repository',
           severity: 'high',
-          message: `Task Controller가 Repository<Entity>를 직접 주입: ${rel(file)}`
+          message: `Task Controller가 Repository<Entity>를 직접 주입: ${rel(file)}`,
+          docRef: 'docs/architecture/scheduling.md#taskcontroller--taskconsumer-메서드로-command-실행-interface-레이어'
         })
         score -= 4
       }
@@ -175,7 +179,8 @@ export function evaluateTaskQueue(root: string): EvaluatorResult {
       failures.push({
         ruleId: 'task-queue.task-type.unique',
         severity: 'critical',
-        message: `taskType '${taskType}'이 ${locations.length}곳에서 중복 등록됨 — ${locations.join(', ')}`
+        message: `taskType '${taskType}'이 ${locations.length}곳에서 중복 등록됨 — ${locations.join(', ')}`,
+        docRef: 'docs/architecture/scheduling.md#taskconsumer-데코레이터'
       })
       score -= 6
     }
@@ -189,7 +194,8 @@ export function evaluateTaskQueue(root: string): EvaluatorResult {
       failures.push({
         ruleId: 'task-queue.app-module.schedule-module',
         severity: 'critical',
-        message: `@Cron 사용되는데 AppModule에 ScheduleModule.forRoot() 등록 없음 — Cron 메서드가 조용히 동작 안 함`
+        message: `@Cron 사용되는데 AppModule에 ScheduleModule.forRoot() 등록 없음 — Cron 메서드가 조용히 동작 안 함`,
+        docRef: 'docs/architecture/scheduling.md#appmodule-설정'
       })
       score -= 6
     }
@@ -197,7 +203,8 @@ export function evaluateTaskQueue(root: string): EvaluatorResult {
       failures.push({
         ruleId: 'task-queue.app-module.task-queue-module',
         severity: 'high',
-        message: `@TaskConsumer 사용되는데 AppModule에 TaskQueueModule import 없음`
+        message: `@TaskConsumer 사용되는데 AppModule에 TaskQueueModule import 없음`,
+        docRef: 'docs/architecture/scheduling.md#appmodule-설정'
       })
       score -= 4
     }

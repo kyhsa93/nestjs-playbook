@@ -1,7 +1,0 @@
-{
-  "enforceLayerDependency": true,
-  "requireRepositoryAbstract": true,
-  "requireTaskQueuePattern": true,
-  "requireSchedulerTryCatch": true,
-  "requireTaskTypeUniqueness": true
-}

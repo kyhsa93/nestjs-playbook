@@ -90,7 +90,8 @@ export function evaluateDeprecatedApi(root: string): EvaluatorResult {
         failures.push({
           ruleId: 'deprecated-api.missing-decorator',
           severity: 'medium',
-          message: `Deprecated/legacy 엔드포인트 의심 — @ApiOperation({ deprecated: true }) 누락: ${rel(file)} @ ${m.name}('${m.routePath}')`
+          message: `Deprecated/legacy 엔드포인트 의심 — @ApiOperation({ deprecated: true }) 누락: ${rel(file)} @ ${m.name}('${m.routePath}')`,
+          docRef: 'docs/conventions.md'
         })
         score -= 3
       }
