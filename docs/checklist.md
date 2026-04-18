@@ -290,8 +290,8 @@
 [ ] Interface DTO(Request/Response)가 아닌 Application Query/Result에 @ApiProperty가 작성되어 있는가?
 [ ] Querystring의 optional 필드에 @ApiPropertyOptional() + @IsOptional()이 함께 적용되어 있는가?
 [ ] @ApiProperty에 숫자 필드의 minimum/maximum/default가 명시되어 있는가?
-[ ] 구버전 엔드포인트에 @ApiOperation({ deprecated: true })가 표시되어 있는가?
-    → 구버전 엔드포인트는 삭제하지 않고 deprecated 표시
+[ ] 사용 중단 예정 엔드포인트에 @ApiOperation({ deprecated: true })가 표시되어 있는가?
+    → 즉시 삭제하지 않고 deprecated 표시 후 마이그레이션 기간 확보
 ```
 
 ---

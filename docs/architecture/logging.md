@@ -21,7 +21,7 @@ NestJS Logger는 5단계 레벨을 제공한다. 각 레벨의 용도를 지켜 
 | 레벨 | 메서드 | 용도 | 예시 |
 |------|--------|------|------|
 | `error` | `logger.error()` | 요청 처리 실패, 외부 시스템 장애 | DB 연결 실패, 외부 API 5xx |
-| `warn` | `logger.warn()` | 정상 동작이지만 주의가 필요한 상황 | Deprecated API 호출, 재시도 발생 |
+| `warn` | `logger.warn()` | 정상 동작이지만 주의가 필요한 상황 | Deprecated 엔드포인트 호출, 재시도 발생 |
 | `log` | `logger.log()` | 주요 비즈니스 이벤트, 상태 변경 | 주문 생성, 결제 완료, 앱 기동 |
 | `debug` | `logger.debug()` | 개발/디버깅용 상세 정보 | 쿼리 파라미터, 중간 계산 결과 |
 | `verbose` | `logger.verbose()` | 최대 상세 정보 | 전체 요청/응답 페이로드 |

@@ -251,16 +251,19 @@ GET /orders?page=0&take=20&status=pending&status=paid
 - **후행 슬래시 없음**: `/orders/` (X) → `/orders` (O)
 - **파일 확장자 없음**: `/orders.json` (X) → `/orders` (O)
 
-### 버전 관리
+### Deprecated 엔드포인트
 
-API 버전이 필요한 경우 URL 접두사로 관리한다.
+사용을 중단할 엔드포인트는 즉시 삭제하지 않고 `@ApiOperation({ deprecated: true })`로 표시하여 클라이언트가 마이그레이션할 시간을 확보한다.
 
+```typescript
+@Post()
+@ApiOperation({ operationId: 'createOrder', deprecated: true })
+async create(@Body() body: CreateOrderRequest): Promise<OrderResponse> { ... }
 ```
-/v1/orders
-/v2/orders
-```
 
-구버전 엔드포인트는 삭제하지 않고 `@ApiOperation({ deprecated: true })`로 표시한다.
+- Swagger UI와 OpenAPI 스펙에 `deprecated: true`로 노출되어 클라이언트가 인지할 수 있다.
+- 호출이 발생하면 `logger.warn()`으로 기록하여 잔존 사용자를 추적한다.
+- 대체 엔드포인트와 제거 예정 시점을 `@ApiOperation({ description })`에 명시한다.
 
 ---
 

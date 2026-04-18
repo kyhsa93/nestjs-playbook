@@ -473,7 +473,7 @@ export class OrderController {
 - `@ApiTags()`: Swagger 그룹핑을 위해 항상 사용
 - `@ApiBearerAuth('token')`: 인증 필요 컨트롤러에 항상 사용
 - `@ApiOperation({ operationId: 'methodName' })`: 코드 제너레이션 지원
-- `@ApiOperation({ deprecated: true })`: 구버전 엔드포인트 표시 (삭제 X)
+- `@ApiOperation({ deprecated: true })`: 사용 중단 예정 엔드포인트 표시 (즉시 삭제하지 않고 마이그레이션 기간 확보)
 - 가드/인터셉터: 메서드 레벨이 아닌 클래스 레벨에 적용
 
 ### @Controller 라우트 접두사 — 예외 케이스
