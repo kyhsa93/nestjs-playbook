@@ -1,50 +1,96 @@
-// task-queue evaluator — enforces guide rules for Task Queue subsystem:
-// - Task Controller (@TaskConsumer holder) lives in interface/ layer.
-// - Task Controller injects CommandService, not DataSource/Repository/TaskExecutionLog.
-// - Task Controller methods throw errors; no `.catch + generateErrorResponse` anti-pattern.
-// - taskType passed to @TaskConsumer is globally unique across the codebase.
-// - TaskQueue is used as abstract class from application layer (import path check).
+// task-queue evaluator — enforces guide rules for Task Queue subsystem.
+// AST-based (listMethodDecorators, listConstructorParams, findClassDecorator).
 //
-// Rules are regex/AST-lite; sophisticated semantic analysis is out of scope.
+// Rules:
+// - Task Controller (@TaskConsumer holder) lives in interface/ layer.
+// - Task Controller injects CommandService; not DataSource/Repository/TaskExecutionLog.
+// - Task Controller body does not call generateErrorResponse (Task context 무의미).
+// - taskType passed to @TaskConsumer is globally unique across the codebase.
+// - If @Cron or @TaskConsumer is used, AppModule imports ScheduleModule/TaskQueueModule.
+//
+// Applicability: if neither @TaskConsumer nor @Cron are present anywhere in
+// src/, the evaluator is skipped (maxScore = 0) so aggregate() excludes it
+// from grade normalization.
 
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 
 import { EvaluatorFailure, EvaluatorResult } from '../shared/types'
-import { walkTsFiles, classifyLayer } from '../shared/ast-utils'
+import {
+  classifyLayer,
+  findClassDecorator,
+  listConstructorParams,
+  listMethodDecorators,
+  walkTsFiles
+} from '../shared/ast-utils'
 
-const TASK_CONSUMER_DECORATOR = /@TaskConsumer\(\s*['"`]([^'"`]+)['"`]/g
+function extractTaskTypeArg(argsText: string): string | null {
+  // @TaskConsumer('order.archive', { ... }) → first string arg
+  const m = argsText.match(/^\s*['"`]([^'"`]+)['"`]/)
+  return m ? m[1] : null
+}
+
+function findAppModuleFile(files: string[]): string | null {
+  // Prefer a file whose class declaration carries @Module and whose basename
+  // matches app[-.]module.ts, then fall back to any @Module file with
+  // ScheduleModule.forRoot() or *Module named AppModule.
+  const candidates = files.filter((f) => /app[-.]?module\.ts$/i.test(path.basename(f)))
+  for (const c of candidates) {
+    if (findClassDecorator(c, 'Module')) return c
+  }
+  // Fallback: any file with @Module declaring an AppModule class
+  for (const f of files) {
+    const content = fs.readFileSync(f, 'utf-8')
+    if (findClassDecorator(f, 'Module') && /class\s+AppModule\b/.test(content)) return f
+  }
+  return null
+}
 
 export function evaluateTaskQueue(root: string): EvaluatorResult {
   const failures: EvaluatorFailure[] = []
-  let score = 20
 
   const srcDir = path.join(root, 'src')
   const files = walkTsFiles(srcDir)
   const rel = (f: string) => path.relative(root, f)
 
-  const taskTypesSeen = new Map<string, string[]>() // taskType → list of files
+  // Applicability gate
+  const hasTaskQueueUsage = files.some((f) => {
+    const content = fs.readFileSync(f, 'utf-8')
+    return /@TaskConsumer\s*\(/.test(content) || /@Cron\s*\(/.test(content)
+  })
+  if (!hasTaskQueueUsage) {
+    return { name: 'task-queue', score: 0, maxScore: 0, failures: [] }
+  }
+
+  let score = 20
+  const taskTypesSeen = new Map<string, string[]>()
+  let anyTaskConsumer = false
+  let anyCron = false
 
   for (const file of files) {
     const content = fs.readFileSync(file, 'utf-8')
-    const hasTaskConsumer = /@TaskConsumer\s*\(/.test(content)
+    const methods = listMethodDecorators(file)
+    const fileHasTaskConsumer = methods.some((m) => m.decorators.some((d) => d.name === 'TaskConsumer'))
+    const fileHasCron = methods.some((m) => m.decorators.some((d) => d.name === 'Cron'))
+    if (fileHasTaskConsumer) anyTaskConsumer = true
+    if (fileHasCron) anyCron = true
+
+    // Collect taskType args from @TaskConsumer decorators
+    for (const m of methods) {
+      for (const d of m.decorators) {
+        if (d.name !== 'TaskConsumer') continue
+        const tt = extractTaskTypeArg(d.argsText)
+        if (!tt) continue
+        const list = taskTypesSeen.get(tt) ?? []
+        list.push(rel(file))
+        taskTypesSeen.set(tt, list)
+      }
+    }
+
     const layer = classifyLayer(file)
 
-    // Collect all taskTypes declared in this file
-    const taskTypes: string[] = []
-    let match: RegExpExecArray | null
-    const re = new RegExp(TASK_CONSUMER_DECORATOR.source, 'g')
-    while ((match = re.exec(content)) !== null) {
-      taskTypes.push(match[1])
-    }
-    for (const t of taskTypes) {
-      const list = taskTypesSeen.get(t) ?? []
-      list.push(rel(file))
-      taskTypesSeen.set(t, list)
-    }
-
-    // Rule 1: @TaskConsumer 메서드를 보유한 파일은 interface/ 레이어에 위치
-    if (hasTaskConsumer && layer !== 'interface') {
+    // Rule 1: Task Controller in interface/
+    if (fileHasTaskConsumer && layer !== 'interface') {
       failures.push({
         ruleId: 'task-queue.controller.layer',
         severity: 'high',
@@ -53,18 +99,33 @@ export function evaluateTaskQueue(root: string): EvaluatorResult {
       score -= 5
     }
 
-    // Rule 2: Task Controller는 DataSource / Repository<...> / TaskExecutionLog 직접 주입 금지
-    // 단, task-queue 모듈 내부 인프라는 허용 (task-queue 디렉토리는 도메인이 아니므로 classifyLayer → unknown이라 pass)
-    if (hasTaskConsumer) {
-      if (/private\s+readonly\s+\w+\s*:\s*DataSource\b/.test(content)) {
+    // Rule 1b: Task Controller 파일명 suffix 컨벤션
+    if (fileHasTaskConsumer && !/-task-controller\.ts$/.test(path.basename(file))) {
+      failures.push({
+        ruleId: 'task-queue.controller.file-suffix',
+        severity: 'medium',
+        message: `@TaskConsumer 보유 파일은 *-task-controller.ts 형식이어야 함: ${rel(file)}`
+      })
+      score -= 2
+    }
+
+    // Rules 2-4: Task Controller injection/error-handling constraints
+    if (fileHasTaskConsumer) {
+      const params = listConstructorParams(file)
+      const hasDataSource = params.some((p) => /\bDataSource\b/.test(p.typeText))
+      const hasRepository = params.some((p) => /\bRepository<.+>/.test(p.typeText))
+      const hasExecLog = params.some((p) => /\bTaskExecutionLog\b/.test(p.typeText))
+      const hasCommandService = params.some((p) => /CommandService\b/.test(p.typeText))
+
+      if (hasDataSource) {
         failures.push({
           ruleId: 'task-queue.controller.no-datasource',
           severity: 'high',
-          message: `Task Controller가 DataSource를 직접 주입: ${rel(file)} (TaskExecutionLog abstract 또는 CommandService 경유 필요)`
+          message: `Task Controller가 DataSource를 직접 주입: ${rel(file)} (CommandService 또는 idempotencyKey 옵션 사용)`
         })
         score -= 4
       }
-      if (/private\s+readonly\s+\w+\s*:\s*Repository<\w+>/.test(content)) {
+      if (hasRepository) {
         failures.push({
           ruleId: 'task-queue.controller.no-repository',
           severity: 'high',
@@ -72,42 +133,43 @@ export function evaluateTaskQueue(root: string): EvaluatorResult {
         })
         score -= 4
       }
-      // 3단계 강한 원자성 패턴: TaskExecutionLog를 직접 주입, idempotencyKey 옵션은 지정하지 않음.
-      // 두 가지를 동시에 쓰면 이중 ledger 체크로 의도 불분명 — 경고.
-      const hasExecLogInjection = /private\s+readonly\s+\w+\s*:\s*TaskExecutionLog\b/.test(content)
+
+      // 이중 ledger 체크 (TaskExecutionLog 주입 + idempotencyKey 옵션 동시)
       const hasIdempotencyKeyOption = /idempotencyKey\s*:/.test(content)
-      if (hasExecLogInjection && hasIdempotencyKeyOption) {
+      if (hasExecLog && hasIdempotencyKeyOption) {
         failures.push({
           ruleId: 'task-queue.controller.double-ledger-check',
           severity: 'medium',
-          message: `Task Controller가 TaskExecutionLog를 직접 주입하면서 idempotencyKey 옵션도 함께 사용: ${rel(file)} — 이중 ledger 체크 의심. 3단계 원자성 패턴이면 idempotencyKey 제거, 2단계이면 TaskExecutionLog 주입 제거`
+          message: `Task Controller가 TaskExecutionLog 주입 + idempotencyKey 옵션 동시 사용: ${rel(file)} — 이중 체크. 3단계 패턴이면 옵션 제거, 2단계이면 주입 제거`
         })
         score -= 2
       }
 
-      // Rule 3: Task Controller 메서드에서 .catch + generateErrorResponse 패턴 금지
-      if (/generateErrorResponse\s*\(/.test(content)) {
-        failures.push({
-          ruleId: 'task-queue.controller.no-http-error-response',
-          severity: 'high',
-          message: `Task Controller에 generateErrorResponse(...) 사용: ${rel(file)} — 예외는 TaskQueueConsumer에 위임(throw)해야 함`
-        })
-        score -= 4
-      }
-
-      // Rule 4: Task Controller는 CommandService를 주입받아야 함 (heuristic)
-      if (!/CommandService\b/.test(content)) {
+      if (!hasCommandService) {
         failures.push({
           ruleId: 'task-queue.controller.command-service-injection',
           severity: 'medium',
-          message: `Task Controller에 CommandService 주입이 보이지 않음: ${rel(file)}`
+          message: `Task Controller에 CommandService 주입 없음: ${rel(file)}`
         })
         score -= 3
+      }
+
+      // Rule: Task Controller 메서드에서 generateErrorResponse 사용 금지
+      for (const m of methods) {
+        if (!m.decorators.some((d) => d.name === 'TaskConsumer')) continue
+        if (/\bgenerateErrorResponse\s*\(/.test(m.body)) {
+          failures.push({
+            ruleId: 'task-queue.controller.no-http-error-response',
+            severity: 'high',
+            message: `Task Controller 메서드 ${m.methodName}가 generateErrorResponse 호출: ${rel(file)} — 예외는 throw로 전파해 TaskQueueConsumer에 위임해야 함`
+          })
+          score -= 4
+        }
       }
     }
   }
 
-  // Rule 5: taskType 전역 유일성
+  // Rule 5: taskType 전역 유일
   for (const [taskType, locations] of taskTypesSeen) {
     if (locations.length > 1) {
       failures.push({
@@ -119,29 +181,25 @@ export function evaluateTaskQueue(root: string): EvaluatorResult {
     }
   }
 
-  // Rule 6 (정보성): Scheduler/Task Controller가 있는데 AppModule에 ScheduleModule/TaskQueueModule 등록 없음
-  const hasTaskConsumerAnywhere = taskTypesSeen.size > 0
-  const hasCronAnywhere = files.some((f) => /@Cron\s*\(/.test(fs.readFileSync(f, 'utf-8')))
-  if (hasTaskConsumerAnywhere || hasCronAnywhere) {
-    const appModule = files.find((f) => /app[-.]?module\.ts$/.test(path.basename(f)))
-    if (appModule) {
-      const appContent = fs.readFileSync(appModule, 'utf-8')
-      if (hasCronAnywhere && !/ScheduleModule\.forRoot\s*\(/.test(appContent)) {
-        failures.push({
-          ruleId: 'task-queue.app-module.schedule-module',
-          severity: 'critical',
-          message: `@Cron 사용하는데 AppModule에 ScheduleModule.forRoot() 등록 없음 — @Cron 메서드가 조용히 동작 안 함`
-        })
-        score -= 6
-      }
-      if (hasTaskConsumerAnywhere && !/TaskQueueModule\b/.test(appContent)) {
-        failures.push({
-          ruleId: 'task-queue.app-module.task-queue-module',
-          severity: 'high',
-          message: `@TaskConsumer 사용하는데 AppModule에 TaskQueueModule import 없음 — @Global 모듈도 한 번은 등록 필요`
-        })
-        score -= 4
-      }
+  // Rule 6: AppModule에 ScheduleModule.forRoot() / TaskQueueModule 등록 확인
+  const appModule = findAppModuleFile(files)
+  if (appModule) {
+    const appContent = fs.readFileSync(appModule, 'utf-8')
+    if (anyCron && !/ScheduleModule\.forRoot\s*\(/.test(appContent)) {
+      failures.push({
+        ruleId: 'task-queue.app-module.schedule-module',
+        severity: 'critical',
+        message: `@Cron 사용되는데 AppModule에 ScheduleModule.forRoot() 등록 없음 — Cron 메서드가 조용히 동작 안 함`
+      })
+      score -= 6
+    }
+    if (anyTaskConsumer && !/TaskQueueModule\b/.test(appContent)) {
+      failures.push({
+        ruleId: 'task-queue.app-module.task-queue-module',
+        severity: 'high',
+        message: `@TaskConsumer 사용되는데 AppModule에 TaskQueueModule import 없음`
+      })
+      score -= 4
     }
   }
 

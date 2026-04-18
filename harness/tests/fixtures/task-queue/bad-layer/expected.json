@@ -1,0 +1,9 @@
+{
+  "name": "task-queue",
+  "applicable": true,
+  "expectedFailureRuleIds": [
+    "task-queue.controller.layer",
+    "task-queue.controller.no-datasource",
+    "task-queue.controller.command-service-injection"
+  ]
+}

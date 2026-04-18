@@ -52,7 +52,6 @@ function extractMethods(content: string): Array<{ name: string; routePath: strin
 
 export function evaluateDeprecatedApi(root: string): EvaluatorResult {
   const failures: EvaluatorFailure[] = []
-  let score = 10
 
   const srcDir = path.join(root, 'src')
   const files = walkTsFiles(srcDir)
@@ -62,6 +61,17 @@ export function evaluateDeprecatedApi(root: string): EvaluatorResult {
   // (the actual traversal uses extractMethods).
   void HTTP_METHOD_DECORATOR
 
+  // Applicability: interface/ 레이어에 HTTP Controller가 하나라도 없으면
+  // deprecated API 관점에서 평가할 대상이 없음.
+  const interfaceFilesWithHttp = files.filter(
+    (f) => classifyLayer(f) === 'interface'
+      && /@(?:Get|Post|Put|Patch|Delete)\s*\(/.test(fs.readFileSync(f, 'utf-8'))
+  )
+  if (interfaceFilesWithHttp.length === 0) {
+    return { name: 'deprecated-api', score: 0, maxScore: 0, failures: [] }
+  }
+
+  let score = 10
   for (const file of files) {
     if (classifyLayer(file) !== 'interface') continue
     const content = fs.readFileSync(file, 'utf-8')
@@ -69,7 +79,11 @@ export function evaluateDeprecatedApi(root: string): EvaluatorResult {
 
     const methods = extractMethods(content)
     for (const m of methods) {
-      const looksDeprecated = /deprecated|legacy|\bv1\b/i.test(m.routePath) || /deprecated|legacy/i.test(m.name)
+      // URL/메서드명에 'deprecated' 또는 'legacy' 토큰이 있을 때만 의심한다.
+      // 이전에는 '/v1/' 같은 API versioning 토큰도 포함했으나, 현재 가이드는
+      // API versioning 자체를 제거했으므로 /v1/ 자체가 가이드 위반이지
+      // deprecated-api 관심사가 아니다.
+      const looksDeprecated = /deprecated|legacy/i.test(m.routePath) || /deprecated|legacy/i.test(m.name)
       const hasApiOperationDeprecated = /@ApiOperation\s*\(\s*\{[^}]*deprecated\s*:\s*true/.test(m.block)
 
       if (looksDeprecated && !hasApiOperationDeprecated) {

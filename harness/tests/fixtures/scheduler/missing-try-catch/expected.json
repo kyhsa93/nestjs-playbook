@@ -1,0 +1,5 @@
+{
+  "name": "scheduler",
+  "applicable": true,
+  "expectedFailureRuleIds": ["scheduler.cron.try-catch"]
+}

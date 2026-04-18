@@ -1,0 +1,18 @@
+{
+  "name": "nestjs-playbook-harness",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Evaluation harness for the nestjs-playbook guide",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "evaluate": "tsx evaluators/cli/run.ts",
+    "test:evaluators": "tsx tests/run-fixtures.ts"
+  },
+  "dependencies": {
+    "typescript": "^5.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "tsx": "^4.7.0"
+  }
+}

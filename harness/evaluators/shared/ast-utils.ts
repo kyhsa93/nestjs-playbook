@@ -71,3 +71,88 @@ export function classifyLayer(filePath: string): 'domain' | 'application' | 'int
   if (normalized.includes('/infrastructure/')) return 'infrastructure'
   return 'unknown'
 }
+
+/** Method-level decorator summary. */
+export interface MethodDecoratorInfo {
+  methodName: string
+  decorators: { name: string; argsText: string; fullText: string }[]
+  body: string          // raw method body text (between { and matching })
+}
+
+/** Inspect a class method: returns its decorators and source-text body. */
+export function listMethodDecorators(filePath: string): MethodDecoratorInfo[] {
+  const sf = readSourceFile(filePath)
+  const results: MethodDecoratorInfo[] = []
+
+  function visit(node: ts.Node) {
+    if (ts.isMethodDeclaration(node) && node.name && ts.isIdentifier(node.name)) {
+      const decorators: MethodDecoratorInfo['decorators'] = []
+      const mods = (node.modifiers as ts.NodeArray<ts.ModifierLike> | undefined) ?? []
+      for (const mod of mods) {
+        if (!ts.isDecorator(mod)) continue
+        const expr = mod.expression
+        let name = ''
+        let argsText = ''
+        if (ts.isCallExpression(expr)) {
+          name = expr.expression.getText(sf)
+          argsText = expr.arguments.map((a) => a.getText(sf)).join(', ')
+        } else {
+          name = expr.getText(sf)
+        }
+        decorators.push({ name, argsText, fullText: mod.getText(sf) })
+      }
+      const body = node.body ? node.body.getText(sf).slice(1, -1) : ''  // strip outer { }
+      results.push({ methodName: node.name.text, decorators, body })
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(sf)
+  return results
+}
+
+/** Constructor parameter types of each class in the file. */
+export interface ConstructorParam {
+  name: string          // e.g. "orderCommandService"
+  typeText: string      // e.g. "OrderCommandService" or "Repository<OrderEntity>"
+}
+
+export function listConstructorParams(filePath: string): ConstructorParam[] {
+  const sf = readSourceFile(filePath)
+  const params: ConstructorParam[] = []
+
+  function visit(node: ts.Node) {
+    if (ts.isConstructorDeclaration(node)) {
+      for (const p of node.parameters) {
+        if (!p.name || !ts.isIdentifier(p.name)) continue
+        const typeText = p.type ? p.type.getText(sf) : 'unknown'
+        params.push({ name: p.name.text, typeText })
+      }
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(sf)
+  return params
+}
+
+/** Find a decorator by name on any class in the file (e.g. '@Module'). */
+export function findClassDecorator(filePath: string, decoratorName: string): string | null {
+  const sf = readSourceFile(filePath)
+  let found: string | null = null
+  function visit(node: ts.Node) {
+    if (ts.isClassDeclaration(node)) {
+      const mods = (node.modifiers as ts.NodeArray<ts.ModifierLike> | undefined) ?? []
+      for (const mod of mods) {
+        if (!ts.isDecorator(mod)) continue
+        const expr = mod.expression
+        const exprName = ts.isCallExpression(expr) ? expr.expression.getText(sf) : expr.getText(sf)
+        if (exprName === decoratorName) {
+          found = mod.getText(sf)
+          return
+        }
+      }
+    }
+    if (!found) ts.forEachChild(node, visit)
+  }
+  visit(sf)
+  return found
+}

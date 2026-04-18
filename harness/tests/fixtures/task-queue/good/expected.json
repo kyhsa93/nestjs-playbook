@@ -1,0 +1,5 @@
+{
+  "name": "task-queue",
+  "applicable": true,
+  "expectedFailureRuleIds": []
+}

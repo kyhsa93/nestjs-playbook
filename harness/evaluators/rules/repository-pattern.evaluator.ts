@@ -9,9 +9,9 @@ export function evaluateRepositoryPattern(root: string): EvaluatorResult {
 
   const domainPath = path.join(root, 'src')
 
-  function walk(dir: string) {
+  function walk(dir: string): string[] {
     if (!fs.existsSync(dir)) return []
-    return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry): string[] => {
       const full = path.join(dir, entry.name)
       return entry.isDirectory() ? walk(full) : [full]
     })
