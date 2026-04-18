@@ -354,6 +354,7 @@ export class TaskQueueConsumer implements OnModuleInit, OnApplicationShutdown {
 // src/order/interface/order-task-controller.ts
 import { Injectable, Logger } from '@nestjs/common'
 
+import { ArchiveOrderCommand } from '@/order/application/command/archive-order-command'
 import { OrderCommandService } from '@/order/application/command/order-command-service'
 import { TaskConsumer } from '@/task-queue/task-consumer.decorator'
 
@@ -372,10 +373,10 @@ export class OrderTaskController {
 
   // 엔티티 단위 중복 실행 방어가 필요한 Task — idempotencyKey 지정
   @TaskConsumer('order.archive', {
-    idempotencyKey: (payload: { orderId: string }) => `order.archive-${payload.orderId}`
+    idempotencyKey: (payload: ArchiveOrderCommand) => `order.archive-${payload.orderId}`
   })
-  public async archive(payload: { orderId: string }): Promise<void> {
-    await this.orderCommandService.archiveOrder(payload.orderId)
+  public async archive(payload: ArchiveOrderCommand): Promise<void> {
+    await this.orderCommandService.archiveOrder(payload)
   }
 }
 ```
@@ -618,6 +619,7 @@ export class OrderCleanupScheduler {
 
 - **`MessageDeduplicationId`를 날짜 단위로 고정**: 다중 인스턴스가 동일 Cron 타이밍에 적재해도 5분 중복 제거 윈도우에서 1건만 큐에 들어간다. Cron 중복 실행 해결의 핵심.
 - **`@nestjs/schedule`의 예외 무음화**: Cron 핸들러 내부 예외는 로깅 없이 삼켜진다. try-catch + `logger.error`로 **명시적 가시성 확보** 필수.
+- **다중 `@Cron` 메서드가 있는 Scheduler는 각 메서드마다 try-catch 반복**: 한 메서드의 예외가 다른 메서드에 영향을 주지는 않지만, 각 메서드의 실패 가시성을 보장하려면 모든 `@Cron` 메서드에 동일한 try-catch + logger.error 블록을 넣는다. 여러 메서드가 공통 실패 처리를 필요로 하면 private 헬퍼(`runSafely(name, fn)`)로 추출할 수 있다.
 - **실패는 다음 Cron tick이 복구**: 날짜 기반 `deduplicationId`는 자연 유일하므로 실패 후 다음 tick에서 다시 적재되어도 `task_outbox`에 중복 row가 쌓이거나 SQS에 중복 배달되지 않는다. (DB 장애로 outbox write 자체가 실패하는 경우는 장애 해소 후 다음 tick까지 기다리거나 긴급 수동 트리거.)
 
 ## 모듈 등록
@@ -723,48 +725,6 @@ FIFO 큐에서 **같은 `MessageGroupId`를 가진 메시지는 엄격히 순차
 
 **핵심 원칙**: groupId가 **병렬성의 경계**다. 같은 group은 직렬, 다른 group은 병렬. 필요한 최소 수준의 순차성만 groupId에 담는다.
 
-## payload 검증
-
-외부(SQS) 입력이므로 Task Controller 메서드 내부에서 **payload 스키마를 검증**한다. HTTP Controller가 `class-validator`로 RequestBody를 검증하는 것과 같은 이유다.
-
-payload 타입을 Application의 Command 클래스(이미 `class-validator` 데코레이터 부착)로 재사용하면 검증 로직이 HTTP와 Task 양쪽에서 공유된다.
-
-```typescript
-import { plainToInstance } from 'class-transformer'
-import { validateOrReject } from 'class-validator'
-
-import { ArchiveOrderCommand } from '@/order/application/command/archive-order-command'
-
-@TaskConsumer('order.archive')
-public async archive(payload: object): Promise<void> {
-  const command = plainToInstance(ArchiveOrderCommand, payload)
-  await validateOrReject(command)   // 검증 실패 시 throw → visibility timeout 후 재시도 → DLQ
-  await this.orderCommandService.archiveOrder(command)
-}
-```
-
-- 검증 실패도 예외이므로 메시지는 삭제되지 않고 재시도된다. 동일 payload는 매번 같은 이유로 실패하므로 `maxReceiveCount` 초과 시 DLQ로 이동한다. **독성 payload가 자연스럽게 격리**되는 구조.
-
-### 검증 + 멱등성 결합
-
-payload 검증과 프레임워크 레벨 멱등성(`idempotencyKey`)을 함께 적용할 때 주의할 점: **프레임워크의 ledger 기록은 핸들러 호출 전에 일어난다**. 즉 payload가 유효하지 않아 핸들러가 throw해도 ledger는 이미 기록되므로, 재시도 시 `already-executed`로 skip되어 **잘못된 payload가 영원히 처리되지 못할 수 있다**.
-
-검증이 필수적인 Task는 **생산자 측에서 payload를 완전히 제어**하거나, 검증이 실패하면 즉시 DLQ로 보내는 방식(즉 재시도 무의미)으로 운영하는 것이 맞다.
-
-```typescript
-@TaskConsumer('order.archive', {
-  idempotencyKey: (payload: { orderId: string }) => `order.archive-${payload.orderId}`
-})
-public async archive(payload: object): Promise<void> {
-  // 검증은 ledger 이후에 실행됨 — producer가 제어하는 payload여야 안전
-  const command = plainToInstance(ArchiveOrderCommand, payload)
-  await validateOrReject(command)
-  await this.orderCommandService.archiveOrder(command.orderId)
-}
-```
-
-검증 실패 후 **재처리가 필요한 케이스**(외부 시스템이 payload를 보내주는 등)는 `idempotencyKey`를 쓰지 않고 [3단계 강한 원자성 패턴](#3단계--강한-원자성이-필요한-경우)을 쓴다 — 트랜잭션 안에서 검증 → ledger → Command 순서로 직접 제어.
-
 ## 멱등성
 
 SQS는 **at-least-once delivery**를 보장하므로, `@TaskConsumer` 메서드가 호출하는 Command는 **반드시 멱등해야 한다**. 멱등성 확보 수단은 3단계로 구분한다.
@@ -794,48 +754,63 @@ public async cleanupExpiredOrders(): Promise<number> {
 
 ```typescript
 @TaskConsumer('order.archive', {
-  idempotencyKey: (payload: { orderId: string }) => `order.archive-${payload.orderId}`
+  idempotencyKey: (payload: ArchiveOrderCommand) => `order.archive-${payload.orderId}`
 })
-public async archive(payload: { orderId: string }): Promise<void> {
-  await this.orderCommandService.archiveOrder(payload.orderId)
+public async archive(payload: ArchiveOrderCommand): Promise<void> {
+  await this.orderCommandService.archiveOrder(payload)
 }
 ```
 
+- payload 타입을 Application의 Command 클래스(`ArchiveOrderCommand`)로 선언하여 호출 계약을 명확히 한다. Service 호출 시 Command 객체를 그대로 전달 — HTTP Controller의 `new CommandClass(body)` → Service 호출 패턴과 동일.
 - Task Controller 코드가 1단계와 동일하게 간결. ledger 로직은 프레임워크가 처리.
 - **semantics는 "record-before-execute"**: 핸들러 실패해도 ledger가 남아 재시도가 skip됨. 즉 **"한 번 시도 후 성공 여부와 무관하게 기억"**. 대부분의 실무 케이스에 충분하다.
+- **`idempotencyKey` 함수 자체의 예외**: 키 생성 중 throw하면 dispatch가 예외 전파 → 메시지 삭제되지 않음 → 재수신 → DLQ. 키 생성 로직은 payload 필드 접근만 하도록 단순하게 유지한다.
 
 ### 3단계 — 강한 원자성이 필요한 경우
 
 "핸들러가 성공해야만 ledger가 남는다"는 엄격한 원자성이 필요하면(드문 케이스), Task Controller가 `TaskExecutionLog`를 **직접 주입받아 `transactionManager.run` 안에서 호출**한다. 프레임워크의 `idempotencyKey`는 지정하지 **않는다**(지정하면 이중 체크).
 
 ```typescript
-@TaskConsumer('order.charge')
-public async charge(payload: { taskId: string; orderId: string; amount: number }): Promise<void> {
-  await this.transactionManager.run(async () => {
-    const result = await this.executionLog.recordOnce(payload.taskId, 'order.charge')
-    if (result === 'already-executed') return
-    await this.orderCommandService.chargeOrder(payload.orderId, payload.amount)
-  })
+@Injectable()
+export class OrderChargeTaskController {
+  constructor(
+    private readonly orderCommandService: OrderCommandService,
+    private readonly transactionManager: TransactionManager,
+    private readonly executionLog: TaskExecutionLog
+  ) {}
+
+  @TaskConsumer('order.charge')
+  public async charge(payload: ChargeOrderCommand): Promise<void> {
+    await this.transactionManager.run(async () => {
+      const result = await this.executionLog.recordOnce(`order.charge-${payload.orderId}`)
+      if (result === 'already-executed') return
+      await this.orderCommandService.chargeOrder(payload)
+    })
+  }
 }
 ```
 
-- Command 실패 → 트랜잭션 롤백 → ledger 롤백 → 재시도 시 정상 처리됨 (진짜 "exactly-once-on-success").
+- **ledger와 Command가 같은 트랜잭션에 참여하는 메커니즘**: `TaskExecutionLogDb.recordOnce()` 내부가 `TransactionManager.getManager()`를 사용하므로, 바깥의 `transactionManager.run(...)`이 연 트랜잭션 문맥에 **자동으로 참여**한다. Command가 실패해 롤백되면 ledger insert도 함께 롤백되어, 재시도 시 정상적으로 다시 처리된다(진정한 "exactly-once-on-success").
+- **`recordOnce`의 2번째 인자(taskType)는 선택**: logging 용도일 뿐이며, Registry에서 프레임워크 경로로 호출할 때만 전달한다. Task Controller에서 직접 호출할 때는 생략 가능(예시 참조) — decorator에 이미 있는 정보의 중복 작성을 피함.
 - 단점: Task Controller가 `TaskExecutionLog` + `TransactionManager`를 직접 주입받아 코드가 늘어난다. 3단계는 결제·외부 트랜잭션 등 금액이 걸린 Task에만 제한적으로 사용한다.
 
 ### Entity / 헬퍼 (프레임워크 내부)
+
+task-queue 모듈 **내부 인프라 코드**(Entity, Relay, Cleaner 등)는 `DataSource`를 직접 주입/사용할 수 있다. "Task Controller의 DB 직접 접근 금지" 원칙은 도메인 Interface 레이어에만 적용되며, task-queue 프레임워크 자체는 DB·Cron·SQS 인프라를 직접 다루는 기술 컴포넌트다.
 
 ```typescript
 // src/task-queue/task-execution-log.entity.ts
 import { Column, Entity, Index, PrimaryColumn } from 'typeorm'
 
+// ledger는 hard delete만 적합하므로 BaseEntity(softDelete 포함)를 상속하지 않는다
 @Entity('task_execution_log')
 @Index(['executedAt'])
 export class TaskExecutionLogEntity {
   @PrimaryColumn()
   taskId: string
 
-  @Column()
-  taskType: string
+  @Column({ nullable: true })
+  taskType: string | null   // logging 용도 — 없으면 null
 
   @Column()
   executedAt: Date
@@ -857,14 +832,14 @@ export function isUniqueViolation(error: unknown): boolean {
 
 ### `TaskExecutionLog` 인터페이스 + 구현체
 
-`TaskConsumerRegistry`가 주입받아 사용하며(2단계), 드물게 Task Controller가 직접 주입받을 수도 있다(3단계).
+`TaskConsumerRegistry`가 주입받아 사용하며(2단계), 드물게 Task Controller가 직접 주입받을 수도 있다(3단계). `taskType` 파라미터는 logging 용도로만 쓰이므로 optional.
 
 ```typescript
 // src/task-queue/task-execution-log.ts
 export type RecordResult = 'recorded' | 'already-executed'
 
 export abstract class TaskExecutionLog {
-  abstract recordOnce(taskId: string, taskType: string): Promise<RecordResult>
+  abstract recordOnce(taskId: string, taskType?: string): Promise<RecordResult>
 }
 ```
 
@@ -884,12 +859,12 @@ export class TaskExecutionLogDb extends TaskExecutionLog {
     super()
   }
 
-  public async recordOnce(taskId: string, taskType: string): Promise<RecordResult> {
+  public async recordOnce(taskId: string, taskType?: string): Promise<RecordResult> {
     const manager = this.transactionManager.getManager()
     try {
       await manager.insert(TaskExecutionLogEntity, {
         taskId,
-        taskType,
+        taskType: taskType ?? null,
         executedAt: new Date()
       })
       return 'recorded'
@@ -929,6 +904,56 @@ export class TaskExecutionLogCleaner {
   }
 }
 ```
+
+## payload 검증
+
+외부(SQS) 입력이므로 Task Controller 메서드 내부에서 **payload 스키마를 검증**한다. HTTP Controller가 `class-validator`로 RequestBody를 검증하는 것과 같은 이유다.
+
+payload 타입을 Application의 Command 클래스(이미 `class-validator` 데코레이터 부착)로 재사용하면 검증 로직이 HTTP와 Task 양쪽에서 공유된다.
+
+```typescript
+import { plainToInstance } from 'class-transformer'
+import { validateOrReject } from 'class-validator'
+
+import { SendReminderEmailCommand } from '@/order/application/command/send-reminder-email-command'
+
+@TaskConsumer('order.send-reminder-email')
+public async sendReminderEmail(payload: object): Promise<void> {
+  const command = plainToInstance(SendReminderEmailCommand, payload)
+  await validateOrReject(command)   // 검증 실패 시 throw → visibility timeout 후 재시도 → DLQ
+  await this.orderCommandService.sendReminderEmail(command)
+}
+```
+
+- 검증 실패도 예외이므로 메시지는 삭제되지 않고 재시도된다. 동일 payload는 매번 같은 이유로 실패하므로 `maxReceiveCount` 초과 시 DLQ로 이동한다. **독성 payload가 자연스럽게 격리**되는 구조.
+
+### payload 크기 제한 (SQS 256KB)
+
+SQS 단일 메시지는 **최대 256KB**다. 큰 페이로드(대용량 파일 내용, 다량 JSON 등)는 그대로 실어보내면 안 된다.
+
+- **작은 메타데이터만 payload에 담는다**: `{ orderId: 'o1', itemIds: ['i1', 'i2'] }` 수준.
+- **대용량 데이터는 S3에 offload**하고 key만 담는다: `{ orderId: 'o1', payloadS3Key: 'tasks/abc.json' }`. Task Controller가 S3에서 다시 가져와 처리.
+- `task_outbox.payload`의 `jsonb` 컬럼 자체는 더 큰 값을 담을 수 있지만, Relay가 SQS로 발행하는 순간 256KB 한계에 걸린다. 한계를 넘으면 SendMessage가 실패하고 row가 `processed=false`로 남아 계속 실패한다 — 이런 row는 수동으로 정리하거나 Relay에 사이즈 체크 + DLQ 이동 로직을 추가한다.
+
+### 검증 + 멱등성 결합
+
+payload 검증과 프레임워크 레벨 멱등성(`idempotencyKey`)을 함께 적용할 때 주의할 점: **프레임워크의 ledger 기록은 핸들러 호출 전에 일어난다**. 즉 payload가 유효하지 않아 핸들러가 throw해도 ledger는 이미 기록되므로, 재시도 시 `already-executed`로 skip되어 **잘못된 payload가 영원히 처리되지 못할 수 있다**.
+
+검증이 필수적인 Task는 **생산자 측에서 payload를 완전히 제어**하거나, 검증이 실패하면 즉시 DLQ로 보내는 방식(즉 재시도 무의미)으로 운영하는 것이 맞다.
+
+```typescript
+@TaskConsumer('order.dispatch-shipment', {
+  idempotencyKey: (payload: DispatchShipmentCommand) => `order.dispatch-shipment-${payload.orderId}`
+})
+public async dispatchShipment(payload: object): Promise<void> {
+  // 검증은 ledger 이후에 실행됨 — producer가 제어하는 payload여야 안전
+  const command = plainToInstance(DispatchShipmentCommand, payload)
+  await validateOrReject(command)
+  await this.orderCommandService.dispatchShipment(command)
+}
+```
+
+검증 실패 후 **재처리가 필요한 케이스**(외부 시스템이 payload를 보내주는 등)는 `idempotencyKey`를 쓰지 않고 [3단계 강한 원자성 패턴](#3단계--강한-원자성이-필요한-경우)을 쓴다 — 트랜잭션 안에서 검증 → ledger → Command 순서로 직접 제어.
 
 ## 긴 Task와 VisibilityTimeout 하트비트
 
