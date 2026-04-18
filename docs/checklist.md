@@ -13,6 +13,8 @@
 
 ## STEP 1 — 파일 구조 및 네이밍
 
+**관련 문서**: [conventions.md](./conventions.md) · [architecture/directory-structure.md](./architecture/directory-structure.md)
+
 ```
 [ ] kebab-case가 아닌 파일명이 있는가?
     → 있다면 kebab-case로 변경
@@ -67,6 +69,8 @@
 
 ## STEP 2 — Domain 레이어
 
+**관련 문서**: [architecture/layer-architecture.md](./architecture/layer-architecture.md) · [architecture/design-principles.md](./architecture/design-principles.md) · [architecture/domain-service.md](./architecture/domain-service.md) · [architecture/aggregate-id.md](./architecture/aggregate-id.md)
+
 ```
 [ ] domain/ 디렉토리에 Aggregate Root, Entity, Value Object, Domain Event, Repository 인터페이스가 있는가?
 [ ] Aggregate Root에 비즈니스 규칙과 불변식이 캡슐화되어 있는가?
@@ -89,6 +93,8 @@
 ---
 
 ## STEP 3 — 레이어 아키텍처
+
+**관련 문서**: [architecture/layer-architecture.md](./architecture/layer-architecture.md) · [architecture/cqrs-pattern.md](./architecture/cqrs-pattern.md) · [architecture/cross-domain.md](./architecture/cross-domain.md)
 
 ```
 [ ] Controller가 Service 호출 + .catch() 에러 변환 외에 다른 로직을 수행하는가?
@@ -142,6 +148,8 @@
 
 ## STEP 4 — Repository 패턴
 
+**관련 문서**: [architecture/repository-pattern.md](./architecture/repository-pattern.md) · [architecture/database-queries.md](./architecture/database-queries.md)
+
 ```
 [ ] Repository가 Aggregate Root 단위로 정의되어 있는가? (Entity/테이블 단위 X)
 [ ] Repository 인터페이스(abstract class)가 domain/ 레이어에 있는가?
@@ -165,6 +173,8 @@
 ---
 
 ## STEP 5 — NestJS 모듈 및 DI 연결
+
+**관련 문서**: [architecture/module-pattern.md](./architecture/module-pattern.md) · [architecture/shared-modules.md](./architecture/shared-modules.md) · [architecture/bootstrap.md](./architecture/bootstrap.md)
 
 ```
 [ ] 모듈이 도메인(Bounded Context) 단위로 구성되어 있는가?
@@ -212,6 +222,8 @@
 
 ## STEP 6 — TypeScript 타이핑
 
+**관련 문서**: [conventions.md](./conventions.md)
+
 ```
 [ ] DTO / Result / Query 클래스의 모든 필드가 public readonly인가?
 [ ] Command 클래스에 Object.assign 생성자 패턴이 있는가?
@@ -235,6 +247,8 @@
 
 ## STEP 7 — 에러 처리
 
+**관련 문서**: [architecture/error-handling.md](./architecture/error-handling.md)
+
 ```
 [ ] Controller의 .catch() 블록이 this.logger.error(error) + throw generateErrorResponse(...) 형태인가?
 [ ] generateErrorResponse 두 번째 인자의 에러 메시지가 ErrorMessage enum 값을 참조하는가?
@@ -250,6 +264,8 @@
 ---
 
 ## STEP 8 — REST API 엔드포인트
+
+**관련 문서**: [architecture/module-pattern.md](./architecture/module-pattern.md) · [architecture/pagination.md](./architecture/pagination.md) · [architecture/rate-limiting.md](./architecture/rate-limiting.md) · [architecture/authentication.md](./architecture/authentication.md) · [architecture/middleware-interceptor.md](./architecture/middleware-interceptor.md)
 
 ```
 [ ] URL이 동사가 아닌 복수 명사 리소스로 구성되어 있는가?
@@ -277,6 +293,8 @@
 
 ## STEP 9 — Swagger 문서화
 
+**관련 문서**: [architecture/module-pattern.md](./architecture/module-pattern.md) · [conventions.md](./conventions.md)
+
 ```
 [ ] 모든 Controller 메서드에 @ApiOperation({ operationId: '...' })가 있는가?
 [ ] 모든 Controller 메서드에 @ApiOkResponse / @ApiCreatedResponse / @ApiNoContentResponse 중 하나가 있는가?
@@ -298,6 +316,8 @@
 
 ## STEP 10 — import 구성
 
+**관련 문서**: [conventions.md](./conventions.md)
+
 ```
 [ ] 상대경로 import(../, ./)가 사용된 곳이 있는가?
     → 있다면 절대경로로 교체 (@/ alias 또는 src/ 기반 — 프로젝트 설정에 따라 선택)
@@ -312,6 +332,8 @@
 ---
 
 ## STEP 11 — 모듈 데코레이터
+
+**관련 문서**: [architecture/module-pattern.md](./architecture/module-pattern.md) · [architecture/scheduling.md](./architecture/scheduling.md) · [architecture/graceful-shutdown.md](./architecture/graceful-shutdown.md) · [architecture/domain-events.md](./architecture/domain-events.md) · [architecture/authentication.md](./architecture/authentication.md)
 
 ```
 [ ] Controller 클래스에 @ApiTags()가 있는가?
@@ -362,6 +384,8 @@
 
 ## STEP 12 — DB / 인프라 패턴
 
+**관련 문서**: [architecture/database-queries.md](./architecture/database-queries.md) · [architecture/config.md](./architecture/config.md) · [architecture/secret-manager.md](./architecture/secret-manager.md) · [architecture/local-dev.md](./architecture/local-dev.md) · [architecture/dockerfile.md](./architecture/dockerfile.md) · [architecture/logging.md](./architecture/logging.md)
+
 ```
 [ ] TypeORM Entity가 BaseEntity를 상속하여 createdAt, updatedAt, deletedAt 컬럼을 포함하는가?
 [ ] 삭제 시 manager.delete()가 아닌 manager.softDelete()를 사용하는가?
@@ -395,6 +419,8 @@
 
 ## STEP 13 — 테스트 패턴
 
+**관련 문서**: [architecture/testing.md](./architecture/testing.md)
+
 ```
 [ ] Domain 레이어 단위 테스트가 프레임워크 없이 순수 TypeScript로 작성되어 있는가?
     → NestJS Test 모듈 없이 직접 new Aggregate()로 테스트
@@ -413,6 +439,8 @@
 ---
 
 ## STEP 14 — 전체 일관성 최종 확인
+
+**관련 문서**: [conventions.md](./conventions.md) · [architecture/design-principles.md](./architecture/design-principles.md)
 
 ```
 [ ] Controller의 .catch() 에서 발생할 수 있는 모든 에러가 generateErrorResponse 두 번째 인자에 매핑되어 있는가?
@@ -445,6 +473,8 @@
 
 ## STEP 15 — 설계 산출물 형태 (설계 단계 작업인 경우)
 
+**관련 문서**: [development-process.md](./development-process.md) · [reference.md](./reference.md)
+
 > 설계 단계(RA, SD, DM, TD) 산출물을 작성한 경우에만 적용한다.
 
 ```
@@ -474,6 +504,8 @@
 ---
 
 ## STEP 16 — 가이드 수정 작업인 경우
+
+**관련 문서**: [development-process.md](./development-process.md) · [conventions.md](./conventions.md)
 
 > 코드 작업이 아니라 가이드 자체를 수정하는 경우에만 적용한다.
 
