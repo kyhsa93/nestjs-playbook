@@ -17,8 +17,10 @@ src/
   task-queue/                          # Task Queue 모듈 (공용)
     task-queue-module.ts
     task-queue.ts                      # 인터페이스 (abstract class)
-    task-queue-sqs.ts                  # SQS 구현체
-    task-consumer.decorator.ts         # @TaskConsumer 데코레이터
+    task-queue-outbox.ts               # Outbox 기반 구현체 (task_outbox에 write)
+    task-outbox.entity.ts              # task_outbox 테이블 Entity
+    task-outbox-relay.ts               # task_outbox → SQS 발행 (Cron)
+    task-consumer.decorator.ts         # @TaskConsumer 데코레이터 (heartbeat 옵션 포함)
     task-consumer-registry.ts          # taskType → Handler 라우팅
     task-queue-consumer.ts             # SQS → Task Controller 디스패치 (폴링)
   config/
