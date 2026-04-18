@@ -231,7 +231,7 @@ export class TaskConsumerRegistry {
 }
 ```
 
-- **ledger 기록은 dispatch 직전(record-before-execute)**: idempotencyKey가 지정된 Task는 **핸들러 호출 전에** ledger에 insert 시도. 이후 핸들러가 실패해도 ledger는 남으므로, 재시도 시 `already-executed`로 스킵된다. 핸들러 성공/실패와 ledger의 원자성이 필요하면 [멱등성 — 강한 원자성이 필요한 경우](#강한-원자성이-필요한-경우)를 참조.
+- **ledger 기록은 dispatch 직전(record-before-execute)**: idempotencyKey가 지정된 Task는 **핸들러 호출 전에** ledger에 insert 시도. 이후 핸들러가 실패해도 ledger는 남으므로, 재시도 시 `already-executed`로 스킵된다. 핸들러 성공/실패와 ledger의 원자성이 필요하면 [멱등성 — 강한 원자성이 필요한 경우](#3단계--강한-원자성이-필요한-경우)를 참조.
 - **ledger 사용이 불필요한 Task**: 본질적으로 멱등한 Task(예: `cleanup-expired` 배치는 "만료 상태만 archive"이므로 여러 번 실행해도 결과 동일)는 `idempotencyKey`를 지정하지 않는다. Ledger 테이블 비용을 아낀다.
 
 ## 3단계: `TaskQueueConsumer` — SQS 폴링
@@ -619,7 +619,29 @@ export class OrderCleanupScheduler {
 
 - **`MessageDeduplicationId`를 날짜 단위로 고정**: 다중 인스턴스가 동일 Cron 타이밍에 적재해도 5분 중복 제거 윈도우에서 1건만 큐에 들어간다. Cron 중복 실행 해결의 핵심.
 - **`@nestjs/schedule`의 예외 무음화**: Cron 핸들러 내부 예외는 로깅 없이 삼켜진다. try-catch + `logger.error`로 **명시적 가시성 확보** 필수.
-- **다중 `@Cron` 메서드가 있는 Scheduler는 각 메서드마다 try-catch 반복**: 한 메서드의 예외가 다른 메서드에 영향을 주지는 않지만, 각 메서드의 실패 가시성을 보장하려면 모든 `@Cron` 메서드에 동일한 try-catch + logger.error 블록을 넣는다. 여러 메서드가 공통 실패 처리를 필요로 하면 private 헬퍼(`runSafely(name, fn)`)로 추출할 수 있다.
+- **다중 `@Cron` 메서드가 있는 Scheduler는 각 메서드마다 try-catch 반복**: 한 메서드의 예외가 다른 메서드에 영향을 주지는 않지만, 각 메서드의 실패 가시성을 보장하려면 모든 `@Cron` 메서드에 동일한 try-catch + logger.error 블록을 넣는다. 반복이 많으면 아래와 같은 private 헬퍼로 추출한다.
+
+```typescript
+// Scheduler 클래스 내부
+private async runSafely(name: string, fn: () => Promise<void>): Promise<void> {
+  try {
+    await fn()
+  } catch (error) {
+    this.logger.error({ message: `Cron 실패: ${name}`, error })
+  }
+}
+
+@Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
+public async enqueueDailyCleanup(): Promise<void> {
+  await this.runSafely('order.cleanup-expired', async () => {
+    const dedupId = `order.cleanup-expired-${new Date().toISOString().slice(0, 10)}`
+    await this.taskQueue.enqueue(
+      'order.cleanup-expired', {},
+      { groupId: 'order.cleanup', deduplicationId: dedupId }
+    )
+  })
+}
+```
 - **실패는 다음 Cron tick이 복구**: 날짜 기반 `deduplicationId`는 자연 유일하므로 실패 후 다음 tick에서 다시 적재되어도 `task_outbox`에 중복 row가 쌓이거나 SQS에 중복 배달되지 않는다. (DB 장애로 outbox write 자체가 실패하는 경우는 장애 해소 후 다음 tick까지 기다리거나 긴급 수동 트리거.)
 
 ## 모듈 등록
@@ -676,7 +698,7 @@ export class OrderModule {}
 
 ## Ad-hoc Task 적재 (트랜잭션 안에서)
 
-Application Service가 DB 변경과 함께 Task를 적재할 때는 **같은 트랜잭션 안에서** `taskQueue.enqueue`를 호출한다. Outbox 구현체(`TaskQueueOutbox`)는 `TransactionManager`의 현재 매니저를 사용하므로, Command의 DB 변경과 Task 적재가 동일 트랜잭션으로 묶인다. commit이 성공해야 `task_outbox` row도 남고, 롤백되면 함께 사라진다 — **dual-write 문제가 원천 차단**된다.
+Application Service가 DB 변경과 함께 Task를 적재할 때는 **같은 트랜잭션 안에서** `taskQueue.enqueue`를 호출한다. Outbox 구현체(`TaskQueueOutbox`)는 `TransactionManager`의 현재 매니저를 사용하므로, Command의 DB 변경과 Task 적재가 동일 트랜잭션으로 묶인다. commit이 성공해야 `task_outbox` row도 남고, 롤백되면 함께 사라진다 — **dual-write 문제가 원천 차단**된다. 참여 메커니즘의 코드 레벨 설명은 [5-3. Outbox 기반 `TaskQueue` 구현체](#5-3-outbox-기반-taskqueue-구현체)를 참조한다.
 
 ```typescript
 import { TaskQueue } from '@/task-queue/task-queue'  // abstract class
@@ -791,6 +813,7 @@ export class OrderChargeTaskController {
 ```
 
 - **ledger와 Command가 같은 트랜잭션에 참여하는 메커니즘**: `TaskExecutionLogDb.recordOnce()` 내부가 `TransactionManager.getManager()`를 사용하므로, 바깥의 `transactionManager.run(...)`이 연 트랜잭션 문맥에 **자동으로 참여**한다. Command가 실패해 롤백되면 ledger insert도 함께 롤백되어, 재시도 시 정상적으로 다시 처리된다(진정한 "exactly-once-on-success").
+- **중복 수신 시 트랜잭션 안전성**: `recordOnce()`는 `INSERT ... ON CONFLICT DO NOTHING`을 사용하므로 `'already-executed'`를 반환해도 트랜잭션이 abort되지 않는다. `return`으로 early exit하고 바깥 `transactionManager.run`이 그대로 commit된다(변경 없는 commit). try/catch unique violation 방식이 왜 위험한지는 [`TaskExecutionLogDb` 구현체](#taskexecutionlog-인터페이스--구현체) 아래 노트 참조.
 - **`recordOnce`의 2번째 인자(taskType)는 선택**: logging 용도일 뿐이며, Registry에서 프레임워크 경로로 호출할 때만 전달한다. Task Controller에서 직접 호출할 때는 생략 가능(예시 참조) — decorator에 이미 있는 정보의 중복 작성을 피함.
 - 단점: Task Controller가 `TaskExecutionLog` + `TransactionManager`를 직접 주입받아 코드가 늘어난다. 3단계는 결제·외부 트랜잭션 등 금액이 걸린 Task에만 제한적으로 사용한다.
 
@@ -847,7 +870,6 @@ export abstract class TaskExecutionLog {
 // src/task-queue/task-execution-log-db.ts
 import { Injectable } from '@nestjs/common'
 
-import { isUniqueViolation } from '@/common/is-unique-violation'
 import { TransactionManager } from '@/database/transaction-manager'
 
 import { RecordResult, TaskExecutionLog } from './task-execution-log'
@@ -861,20 +883,25 @@ export class TaskExecutionLogDb extends TaskExecutionLog {
 
   public async recordOnce(taskId: string, taskType?: string): Promise<RecordResult> {
     const manager = this.transactionManager.getManager()
-    try {
-      await manager.insert(TaskExecutionLogEntity, {
-        taskId,
-        taskType: taskType ?? null,
-        executedAt: new Date()
-      })
-      return 'recorded'
-    } catch (error) {
-      if (isUniqueViolation(error)) return 'already-executed'
-      throw error
-    }
+    // INSERT ... ON CONFLICT DO NOTHING — try/catch unique violation 대신 사용.
+    // Postgres는 트랜잭션 내에서 에러가 발생하면 트랜잭션 전체를 abort 상태로
+    // 만들기 때문에, 3단계(강한 원자성) 패턴처럼 바깥 트랜잭션이 있는 경우
+    // try/catch 방식은 후속 쿼리와 commit이 SQLSTATE 25P02로 실패한다.
+    // `.orIgnore()`는 예외를 발생시키지 않으므로 어느 문맥에서든 안전하다.
+    const result = await manager
+      .createQueryBuilder()
+      .insert()
+      .into(TaskExecutionLogEntity)
+      .values({ taskId, taskType: taskType ?? null, executedAt: new Date() })
+      .orIgnore()
+      .execute()
+    return (result.identifiers?.length ?? 0) > 0 ? 'recorded' : 'already-executed'
   }
 }
 ```
+
+- **UPSERT 패턴 선택의 이유**: 이전 버전은 `try { INSERT } catch (isUniqueViolation) { ... }` 방식이었으나, Postgres에서는 unique 위반 발생 시 **현재 트랜잭션이 aborted 상태**로 전환된다(SQLSTATE 25P02). 3단계 강한 원자성 패턴처럼 `transactionManager.run(...)` 안에서 `recordOnce()`를 호출할 경우, `'already-executed'` 반환 후 후속 작업·commit이 모두 "current transaction is aborted"로 실패한다. `.orIgnore()`(`ON CONFLICT DO NOTHING`)는 **예외를 발생시키지 않고** 충돌 row를 조용히 무시하므로, 어떤 트랜잭션 문맥에서도 안전하다.
+- `isUniqueViolation` 헬퍼는 ledger 외의 영역(예: `task_outbox.deduplicationId` UNIQUE 위반 처리 등)에서 여전히 유용하므로 유지한다.
 
 ### Ledger cleanup
 
