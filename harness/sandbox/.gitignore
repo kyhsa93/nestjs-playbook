@@ -1,0 +1,4 @@
+# sandbox is runtime-only — nothing in it should be committed.
+*
+!.gitignore
+!README.md

@@ -27,6 +27,8 @@ import { evaluateDeprecatedApi } from '../rules/deprecated-api.evaluator'
 import { evaluateModuleDI } from '../rules/module-di.ast.evaluator'
 import { evaluateImportGraph } from '../rules/import-graph.evaluator'
 import { evaluateDomainEventOutbox } from '../rules/domain-event-outbox.evaluator'
+import { evaluateBuild } from '../rules/build.evaluator'
+import { evaluateTestRun } from '../rules/test-run.evaluator'
 import { aggregate } from '../shared/score'
 import type { EvaluatorResult } from '../shared/types'
 
@@ -45,7 +47,9 @@ const EVALUATORS: Record<string, (root: string) => EvaluatorResult> = {
   'deprecated-api': evaluateDeprecatedApi,
   'module-di-ast': evaluateModuleDI,
   'import-graph': evaluateImportGraph,
-  'domain-event-outbox': evaluateDomainEventOutbox
+  'domain-event-outbox': evaluateDomainEventOutbox,
+  build: evaluateBuild,
+  'test-run': evaluateTestRun
 }
 
 interface Args {

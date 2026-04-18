@@ -1,0 +1,39 @@
+name: harness
+
+on:
+  pull_request:
+    paths:
+      - 'harness/**'
+      - 'docs/checklist.md'
+      - '.github/workflows/harness.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'harness/**'
+      - 'docs/checklist.md'
+      - '.github/workflows/harness.yml'
+
+jobs:
+  typecheck-and-fixtures:
+    name: typecheck + evaluator regression fixtures
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: harness
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: harness/package-lock.json
+
+      - name: Install harness dependencies
+        run: npm ci
+
+      - name: TypeScript typecheck
+        run: npm run typecheck
+
+      - name: Evaluator regression tests
+        run: npm run test:evaluators
