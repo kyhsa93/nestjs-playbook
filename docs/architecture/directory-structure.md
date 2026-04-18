@@ -14,6 +14,13 @@ src/
     outbox-relay.ts                    # Outbox → SQS 전송 (폴링)
     event-consumer.ts                  # SQS → EventHandler 수신 (폴링)
     event-handler-registry.ts          # eventType → Handler 라우팅
+  task-queue/                          # Task Queue 모듈 (공용)
+    task-queue-module.ts
+    task-queue.ts                      # 인터페이스 (abstract class)
+    task-queue-sqs.ts                  # SQS 구현체
+    task-consumer.decorator.ts         # @TaskConsumer 데코레이터
+    task-consumer-registry.ts          # taskType → Handler 라우팅
+    task-queue-consumer.ts             # SQS → Task Controller 디스패치 (폴링)
   config/
     <concern>.config.ts              # 관심사별 설정 팩토리 (database, jwt 등)
     config-validator.ts              # 환경 변수 검증
@@ -38,7 +45,8 @@ src/
         <verb>-<noun>-query.ts
         <verb>-<noun>-result.ts
     interface/
-      <domain>-controller.ts              # Controller
+      <domain>-controller.ts              # HTTP Controller
+      <domain>-task-controller.ts         # Task Controller (@TaskConsumer 메서드 보유)
       dto/
         <verb>-<noun>-request-body.ts     # 요청 DTO
         <verb>-<noun>-request-param.ts
@@ -49,6 +57,7 @@ src/
       <domain>-query-impl.ts            # Query 구현체 (읽기 전용 DB 접근)
       <external-domain>-adapter-impl.ts # 외부 도메인 Adapter 구현체
       <concern>-service-impl.ts         # 기술 인프라 Service 구현체
+      <concern>-scheduler.ts            # Scheduler (@Cron → TaskQueue.enqueue)
     <domain>-module.ts
     <domain>-error-message.ts
     <domain>-enum.ts

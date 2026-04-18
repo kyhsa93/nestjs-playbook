@@ -38,6 +38,7 @@ src/
         get-orders-result.ts
     interface/
       order-controller.ts
+      order-task-controller.ts       ← Task Controller (선택 — 비동기 Task가 있을 때)
       dto/
         cancel-order-request-body.ts
         create-order-request-body.ts
@@ -55,6 +56,7 @@ src/
       payment-repository-impl.ts
       user-adapter-impl.ts           ← 외부 도메인 Adapter 구현체
       crypto-service-impl.ts          ← 기술 인프라 Service 구현체
+      order-cleanup-scheduler.ts     ← Scheduler (선택 — Cron이 필요할 때)
     order-module.ts
     order-error-message.ts
     order-enum.ts
@@ -755,6 +757,58 @@ import { DeleteOrderCommand } from '@/order/application/command/delete-order-com
 export class DeleteOrderRequestParam extends DeleteOrderCommand {}
 ```
 
+### Task Controller (선택 — 비동기 Task가 있을 때)
+
+Scheduler나 다른 서비스가 적재한 Task를 `@TaskConsumer`로 구독하여 Command를 실행한다. 자세한 패턴은 [scheduling.md](architecture/scheduling.md)를 참고한다.
+
+```typescript
+// interface/order-task-controller.ts
+import { Injectable, Logger } from '@nestjs/common'
+
+import { OrderCommandService } from '@/order/application/command/order-command-service'
+import { TaskConsumer } from '@/task-queue/task-consumer.decorator'
+
+@Injectable()
+export class OrderTaskController {
+  private readonly logger = new Logger(OrderTaskController.name)
+
+  constructor(private readonly orderCommandService: OrderCommandService) {}
+
+  @TaskConsumer('order.cleanup-expired')
+  public async cleanupExpired(): Promise<void> {
+    const count = await this.orderCommandService.cleanupExpiredOrders()
+    this.logger.log({ message: '만료 주문 정리', cleaned_count: count })
+  }
+}
+```
+
+### Scheduler (선택 — Cron이 필요할 때)
+
+```typescript
+// infrastructure/order-cleanup-scheduler.ts
+import { Injectable, Logger } from '@nestjs/common'
+import { Cron, CronExpression } from '@nestjs/schedule'
+
+import { TaskQueue } from '@/task-queue/task-queue'
+
+@Injectable()
+export class OrderCleanupScheduler {
+  private readonly logger = new Logger(OrderCleanupScheduler.name)
+
+  constructor(private readonly taskQueue: TaskQueue) {}
+
+  @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
+  public async enqueueDailyCleanup(): Promise<void> {
+    const dedupId = `order.cleanup-expired-${new Date().toISOString().slice(0, 10)}`
+    await this.taskQueue.enqueue(
+      'order.cleanup-expired',
+      {},
+      { groupId: 'order.cleanup', deduplicationId: dedupId }
+    )
+  }
+}
+```
+
 ---
 
 ## Module
@@ -778,7 +832,9 @@ import { OrderItemEntity } from '@/order/infrastructure/entity/order-item.entity
 import { OrderQueryImpl } from '@/order/infrastructure/order-query-impl'
 import { OrderRepositoryImpl } from '@/order/infrastructure/order-repository-impl'
 import { PaymentRepositoryImpl } from '@/order/infrastructure/payment-repository-impl'
+import { OrderCleanupScheduler } from '@/order/infrastructure/order-cleanup-scheduler'
 import { OrderController } from '@/order/interface/order-controller'
+import { OrderTaskController } from '@/order/interface/order-task-controller'
 
 @Module({
   imports: [TypeOrmModule.forFeature([OrderEntity, OrderItemEntity])],
@@ -786,6 +842,8 @@ import { OrderController } from '@/order/interface/order-controller'
   providers: [
     OrderCommandService,
     OrderQueryService,
+    OrderTaskController,        // Task Controller — @TaskConsumer 메서드 보유
+    OrderCleanupScheduler,      // Scheduler — Cron으로 Task 적재
     { provide: OrderQuery, useClass: OrderQueryImpl },
     { provide: OrderRepository, useClass: OrderRepositoryImpl },
     { provide: PaymentRepository, useClass: PaymentRepositoryImpl },

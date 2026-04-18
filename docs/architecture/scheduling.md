@@ -19,6 +19,22 @@
 
 기존 Outbox → SQS 구조와 동일한 SDK/인프라를 재사용한다. [domain-events.md](./domain-events.md)의 `EventConsumer`/`EventHandlerRegistry` 패턴과 같은 결의 구조다.
 
+## Task vs Domain Event
+
+둘 다 SQS를 거치지만 **용도와 소비 모델이 다르다**. 혼동을 피하려면 아래 기준으로 선택한다.
+
+| | **Task Queue** | **Domain Event** |
+|---|---|---|
+| 목적 | 필요에 따라 구현하여 사용하는 비동기 작업 (배치, Cron, 분리된 후속 처리) | Command 실행의 **결과(사실)** 를 수신하여 처리 |
+| 의미 단위 | 명령(imperative): "X를 수행하라" | 사실(declarative past): "X가 일어났다" |
+| 핸들러 수 | **1:1** — `taskType`당 정확히 하나의 Task Controller 메서드 | **1:N** — 하나의 이벤트를 여러 EventHandler가 fan-out 구독 |
+| 생산자 | Scheduler (Cron) / Application Service가 `TaskQueue.enqueue`로 직접 적재 | Aggregate가 `domainEvents`에 push → Repository가 Outbox 테이블에 저장 → `OutboxRelay`가 SQS로 발행 |
+| 예시 | "만료 주문 정리 배치 실행", "알림 재전송", "리포트 생성" | `OrderCancelled` 이벤트에 대해 환불·재고 복원·알림 발송 각 핸들러 구동 |
+| 실패 처리 | visibility timeout 재시도 → DLQ | 동일 (각 핸들러 단위로) |
+| 가이드 | 본 문서 | [domain-events.md](./domain-events.md) |
+
+핵심 판단 기준: **"이건 Command의 결과를 관찰하는 것인가?"** 그렇다면 Domain Event. 그게 아니라 "이 작업을 비동기로 실행하고 싶다"면 Task.
+
 ## 설치
 
 ```bash
@@ -50,10 +66,12 @@ SQS_TASK_DLQ_URL=https://.../app-task-dlq.fifo
 ```
 src/
   task-queue/                                # 공유 Task Queue 인프라
+    task-queue-module.ts                     # @Global 모듈
+    task-queue.ts                            # TaskQueue 인터페이스 (abstract class)
+    task-queue-sqs.ts                        # SQS 구현체
     task-consumer.decorator.ts               # @TaskConsumer 데코레이터
     task-consumer-registry.ts                # taskType → 핸들러 라우팅
     task-queue-consumer.ts                   # SQS 폴링 → registry.dispatch
-    task-queue.ts                            # SQS 적재 어댑터 (Producer)
   order/
     interface/
       order-controller.ts                    # HTTP 입력 어댑터
@@ -62,7 +80,7 @@ src/
       order-cleanup-scheduler.ts             # @Cron → TaskQueue.enqueue
     application/
       command/
-        order-command-service.ts             # 비즈니스 로직 — 큐를 모름
+        order-command-service.ts             # 비즈니스 로직 — TaskQueue 인터페이스만 주입
 ```
 
 ## 1단계: `@TaskConsumer` 데코레이터
@@ -95,7 +113,8 @@ export function getTaskHandler(taskType: string): HandlerEntry | undefined {
 }
 ```
 
-- **taskType은 전역 유일**: Task는 정확히 하나의 핸들러가 실행되어야 한다. 도메인 이벤트(1:N fan-out)와 다른 점이다. 중복 등록은 부트스트랩 시점에 바로 실패시킨다.
+- **taskType은 전역 유일**: Task는 정확히 하나의 핸들러가 실행되어야 한다. 중복 등록은 부트스트랩 시점에 바로 실패시킨다.
+- **등록 시점은 class 평가 시점(import 시점)**: 데코레이터는 파일이 import되어 class 본문이 평가될 때 `TASK_HANDLER_MAP`에 엔트리를 추가한다. 따라서 **Task Controller는 반드시 어떤 모듈의 `providers`에 등록되어야** 모듈 로딩 과정에서 파일이 import되어 데코레이터가 발화한다. providers에 없으면 class 파일 자체가 로드되지 않아 `TaskQueueConsumer`가 해당 `taskType`을 찾지 못한다.
 
 ## 2단계: `TaskConsumerRegistry` — 라우팅
 
@@ -103,15 +122,13 @@ export function getTaskHandler(taskType: string): HandlerEntry | undefined {
 
 ```typescript
 // src/task-queue/task-consumer-registry.ts
-import { Injectable, Logger } from '@nestjs/common'
+import { Injectable } from '@nestjs/common'
 import { ModuleRef } from '@nestjs/core'
 
 import { getTaskHandler } from './task-consumer.decorator'
 
 @Injectable()
 export class TaskConsumerRegistry {
-  private readonly logger = new Logger(TaskConsumerRegistry.name)
-
   constructor(private readonly moduleRef: ModuleRef) {}
 
   public async dispatch(taskType: string, payload: object): Promise<void> {
@@ -144,15 +161,17 @@ export class TaskQueueConsumer implements OnModuleInit, OnApplicationShutdown {
   })
   private readonly queueUrl = process.env.SQS_TASK_QUEUE_URL!
   private running = true
+  private pollPromise: Promise<void> = Promise.resolve()
 
   constructor(private readonly registry: TaskConsumerRegistry) {}
 
   public onModuleInit(): void {
-    void this.poll()
+    this.pollPromise = this.poll()
   }
 
   public async onApplicationShutdown(): Promise<void> {
     this.running = false
+    await this.pollPromise  // in-flight Task 처리 완료까지 대기
   }
 
   private async poll(): Promise<void> {
@@ -160,9 +179,9 @@ export class TaskQueueConsumer implements OnModuleInit, OnApplicationShutdown {
       try {
         const result = await this.sqs.send(new ReceiveMessageCommand({
           QueueUrl: this.queueUrl,
-          MaxNumberOfMessages: 1,
-          WaitTimeSeconds: 20,
-          VisibilityTimeout: 300
+          MaxNumberOfMessages: 10,  // 배치 수신으로 처리량 향상 (최대 10)
+          WaitTimeSeconds: 20,      // long polling — SQS API 호출 비용 절감
+          VisibilityTimeout: 300    // 가장 긴 Task의 최대 처리 시간보다 넉넉히
         }))
 
         for (const message of result.Messages ?? []) {
@@ -197,6 +216,8 @@ export class TaskQueueConsumer implements OnModuleInit, OnApplicationShutdown {
 ```
 
 - **메시지 삭제는 성공 시에만**: 예외가 발생하면 삭제하지 않아 visibility timeout 경과 후 자동 재수신 → `maxReceiveCount` 초과 시 DLQ로 이동한다.
+- **Graceful Shutdown은 `pollPromise`를 await**: `onApplicationShutdown`이 루프 종료를 대기하지 않으면 NestJS가 앱을 종료시켜 in-flight Task가 중간에 끊긴다. 위 구현처럼 `pollPromise`를 저장하고 shutdown에서 await해야 한다. 종료 지연이 염려되면 장기 Task는 하단 [긴 Task와 VisibilityTimeout 하트비트](#긴-task와-visibilitytimeout-하트비트) 패턴을 적용한다.
+- **`MaxNumberOfMessages`는 10까지 배치 수신 가능**: 1로 두면 메시지당 왕복 1회라 처리량이 낮다. 병렬성은 인스턴스 수 × batch 크기로 조절한다.
 - `VisibilityTimeout`은 가장 긴 Task의 최대 처리 시간보다 넉넉히 설정한다.
 
 ## 4단계: `TaskController` — `@TaskConsumer` 메서드로 Command 실행 (Interface 레이어)
@@ -233,23 +254,36 @@ export class OrderTaskController {
 - **payload 타입은 메서드 시그니처에 명시**: 호출 계약을 명확히 한다. 필요 시 Zod/class-validator로 런타임 검증을 추가한다.
 - **Interface DTO 규칙 적용**: payload 타입을 Application의 Command 클래스로 그대로 쓰거나, 필요 시 Interface DTO로 `extends`하여 thin wrapper로 둔다. (HTTP RequestBody와 동일한 방식 — [layer-architecture.md](./layer-architecture.md#interface-dto) 참조)
 
-## 5단계: `TaskQueue` — Task 적재 어댑터 (Producer)
+## 5단계: `TaskQueue` — 인터페이스와 구현체 분리
 
-SQS에 Task 메시지를 보내는 공용 어댑터다. Scheduler와 Application Service 양쪽에서 사용한다.
+Task 적재는 Application Service/Scheduler 양쪽에서 호출되므로 **인터페이스(abstract class)와 구현체를 분리**한다. Repository 패턴과 동일한 이유로, Application 레이어는 SQS를 알지 못하도록 abstract class에만 의존한다. DI 컨테이너가 런타임에 SQS 구현체를 주입한다.
+
+### 5-1. `TaskQueue` 인터페이스
 
 ```typescript
 // src/task-queue/task-queue.ts
-import { Injectable } from '@nestjs/common'
-import { SendMessageCommand, SQSClient } from '@aws-sdk/client-sqs'
-
 export type EnqueueOptions = {
   groupId: string
   deduplicationId: string
-  delaySeconds?: number  // Standard 큐에서만 사용, 최대 900초
+  delaySeconds?: number  // Standard 큐 또는 FIFO 큐에서 최대 900초까지 지연 가능
 }
 
+export abstract class TaskQueue {
+  abstract enqueue(taskType: string, payload: object, options: EnqueueOptions): Promise<void>
+}
+```
+
+### 5-2. SQS 구현체
+
+```typescript
+// src/task-queue/task-queue-sqs.ts
+import { Injectable } from '@nestjs/common'
+import { SendMessageCommand, SQSClient } from '@aws-sdk/client-sqs'
+
+import { EnqueueOptions, TaskQueue } from './task-queue'
+
 @Injectable()
-export class TaskQueue {
+export class TaskQueueSqs extends TaskQueue {
   private readonly sqs = new SQSClient({
     ...(process.env.AWS_ENDPOINT ? { endpoint: process.env.AWS_ENDPOINT } : {})
   })
@@ -260,11 +294,14 @@ export class TaskQueue {
       QueueUrl: this.queueUrl,
       MessageBody: JSON.stringify({ taskType, payload }),
       MessageGroupId: options.groupId,
-      MessageDeduplicationId: options.deduplicationId
+      MessageDeduplicationId: options.deduplicationId,
+      ...(options.delaySeconds !== undefined ? { DelaySeconds: options.delaySeconds } : {})
     }))
   }
 }
 ```
+
+DI 바인딩은 [모듈 등록](#모듈-등록) 섹션에서 `{ provide: TaskQueue, useClass: TaskQueueSqs }`로 수행한다.
 
 ## 6단계: Scheduler — Cron → TaskQueue
 
@@ -304,9 +341,20 @@ export class OrderCleanupScheduler {
 
 ```typescript
 // src/task-queue/task-queue-module.ts
+import { Global, Module } from '@nestjs/common'
+
+import { TaskConsumerRegistry } from './task-consumer-registry'
+import { TaskQueue } from './task-queue'
+import { TaskQueueConsumer } from './task-queue-consumer'
+import { TaskQueueSqs } from './task-queue-sqs'
+
 @Global()
 @Module({
-  providers: [TaskQueue, TaskConsumerRegistry, TaskQueueConsumer],
+  providers: [
+    TaskConsumerRegistry,
+    TaskQueueConsumer,
+    { provide: TaskQueue, useClass: TaskQueueSqs }
+  ],
   exports: [TaskQueue]
 })
 export class TaskQueueModule {}
@@ -330,9 +378,11 @@ export class OrderModule {}
 
 ## Ad-hoc Task 적재
 
-Application Service나 이벤트 핸들러에서도 `TaskQueue`를 주입받아 Task를 적재할 수 있다.
+Application Service나 이벤트 핸들러에서도 `TaskQueue` **abstract class**를 주입받아 Task를 적재할 수 있다. Application 레이어는 SQS 구현 세부사항을 모른다.
 
 ```typescript
+import { TaskQueue } from '@/task-queue/task-queue'  // abstract class
+
 @Injectable()
 export class OrderCommandService {
   constructor(private readonly taskQueue: TaskQueue) {}
@@ -347,6 +397,40 @@ export class OrderCommandService {
   }
 }
 ```
+
+## MessageGroupId 전략
+
+FIFO 큐에서 **같은 `MessageGroupId`를 가진 메시지는 엄격히 순차 처리**된다. 잘못 정하면 의도치 않은 직렬화로 처리량이 떨어지거나, 반대로 순서가 깨진다.
+
+| 상황 | groupId 설정 |
+|------|-------------|
+| Cron 전역 배치 (일 1회 등) | Task 카테고리 기준: `'order.cleanup'` — 단일 인스턴스만 실행되면 됨 |
+| Aggregate 단위 순차성 필요 | Aggregate ID: `orderId` — 같은 주문의 후속 Task는 순서대로 |
+| 순서 무관 + 고처리량 | 랜덤 UUID 또는 `taskType`+random: 병렬성 극대화 |
+
+**핵심 원칙**: groupId가 **병렬성의 경계**다. 같은 group은 직렬, 다른 group은 병렬. 필요한 최소 수준의 순차성만 groupId에 담는다.
+
+## payload 검증
+
+외부(SQS) 입력이므로 Task Controller 메서드 내부에서 **payload 스키마를 검증**한다. HTTP Controller가 `class-validator`로 RequestBody를 검증하는 것과 같은 이유다.
+
+payload 타입을 Application의 Command 클래스(이미 `class-validator` 데코레이터 부착)로 재사용하면 검증 로직이 HTTP와 Task 양쪽에서 공유된다.
+
+```typescript
+import { plainToInstance } from 'class-transformer'
+import { validateOrReject } from 'class-validator'
+
+import { ArchiveOrderCommand } from '@/order/application/command/archive-order-command'
+
+@TaskConsumer('order.archive')
+public async archive(payload: object): Promise<void> {
+  const command = plainToInstance(ArchiveOrderCommand, payload)
+  await validateOrReject(command)   // 검증 실패 시 throw → visibility timeout 후 재시도 → DLQ
+  await this.orderCommandService.archiveOrder(command)
+}
+```
+
+- 검증 실패도 예외이므로 메시지는 삭제되지 않고 재시도된다. 동일 payload는 매번 같은 이유로 실패하므로 `maxReceiveCount` 초과 시 DLQ로 이동한다. **독성 payload가 자연스럽게 격리**되는 구조.
 
 ## 멱등성
 
@@ -368,6 +452,39 @@ public async cleanupExpiredOrders(): Promise<number> {
 ```
 
 엔티티 단위 멱등성이 필요하면 payload에 `taskId`를 포함하고 처리 이력 테이블(unique index)로 중복 실행을 방어한다.
+
+## 긴 Task와 VisibilityTimeout 하트비트
+
+`VisibilityTimeout`은 최대 12시간이지만, 처리가 그보다 길어지거나 처리 시간이 예측 불가능한 경우 **처리 중 주기적으로 `ChangeMessageVisibility`를 호출**하여 timeout을 연장한다. 연장하지 않으면 다른 Consumer가 동일 메시지를 중복 수신한다.
+
+```typescript
+import { ChangeMessageVisibilityCommand } from '@aws-sdk/client-sqs'
+
+// TaskQueueConsumer 내부 — 긴 Task에 한해 호출
+private async withHeartbeat<T>(
+  receiptHandle: string,
+  extendSeconds: number,
+  intervalMs: number,
+  task: () => Promise<T>
+): Promise<T> {
+  const timer = setInterval(() => {
+    void this.sqs.send(new ChangeMessageVisibilityCommand({
+      QueueUrl: this.queueUrl,
+      ReceiptHandle: receiptHandle,
+      VisibilityTimeout: extendSeconds
+    })).catch((error) => this.logger.warn({ message: '하트비트 실패', error }))
+  }, intervalMs)
+
+  try {
+    return await task()
+  } finally {
+    clearInterval(timer)
+  }
+}
+```
+
+- 호출 시점: Task Controller가 장기 처리(대용량 리포트, 외부 API 배치)를 하는 경우에 한해 적용한다.
+- 초기 `VisibilityTimeout`을 무조건 크게 잡으면 실패 시 재시도 지연이 커지므로, **짧게 잡고 하트비트로 연장**하는 편이 회복력 측면에서 유리하다.
 
 ## Graceful Shutdown
 
@@ -391,7 +508,8 @@ async warmupCache() { /* ... */ }
 - **`@TaskConsumer` 데코레이터로 Task 구독**: `taskType` 문자열 하나로 Scheduler(적재)와 Task Controller(소비)가 연결된다.
 - **Task Controller는 Interface 레이어**: HTTP Controller와 동일한 입력 어댑터. `CommandService`를 주입받아 Command를 실행만 한다. 조건 분기·비즈니스 로직 금지.
 - **Scheduler는 적재만**: `@Cron` 핸들러는 `TaskQueue.enqueue`만 호출한다. Scheduler와 SQS 폴링 인프라는 Infrastructure 레이어.
-- **Domain/Application은 큐를 모른다**: Application Service는 필요 시 `TaskQueue` 인터페이스에만 의존한다.
+- **Domain/Application은 큐 구현을 모른다**: Application Service는 `TaskQueue` **abstract class**에만 의존한다. SQS 구현체(`TaskQueueSqs`)는 Infrastructure 레이어에 위치하며, DI 바인딩으로 주입된다.
+- **Task ≠ Domain Event**: Task는 필요에 따라 구현하여 실행하는 비동기 작업(1:1), Domain Event는 Command 실행 결과를 수신해 처리하는 수단(1:N). 선택 기준은 상단 표 참조.
 - **`taskType`은 전역 유일**: `@TaskConsumer` 중복 등록은 부트스트랩 시점에 실패시킨다. (도메인 이벤트의 1:N fan-out과 다른 점)
 - **FIFO + MessageDeduplicationId**: 다중 인스턴스 Cron 중복 적재는 큐 레벨에서 방지한다.
 - **실패 시 메시지 삭제 금지**: visibility timeout → 재수신 → DLQ 구조를 신뢰한다. try-catch로 삼키고 Delete하면 실패가 소실된다.
