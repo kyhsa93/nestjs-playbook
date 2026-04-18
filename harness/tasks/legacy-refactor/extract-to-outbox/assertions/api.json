@@ -1,0 +1,4 @@
+{
+  "requireTaskController": true,
+  "disallowHttpErrorResponseInTaskController": true
+}

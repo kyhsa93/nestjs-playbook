@@ -1,0 +1,1 @@
+{"requiredPaths":["src/<domain>/domain","src/<domain>/application","src/<domain>/interface","src/<domain>/infrastructure","src/<domain>/interface/<domain>-task-controller.ts","src/<domain>/infrastructure/<concern>-scheduler.ts"]}

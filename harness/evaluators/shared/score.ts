@@ -18,10 +18,17 @@ export function aggregate(results: EvaluatorResult[]) {
     failures.push(...r.failures)
 
     if (r.name.includes('structure')) breakdown.structure += r.score
-    if (r.name.includes('layer') || r.name.includes('repository') || r.name.includes('checklist')) {
+    if (
+      r.name.includes('layer')
+      || r.name.includes('repository')
+      || r.name.includes('checklist')
+      || r.name.includes('task-queue')
+      || r.name.includes('scheduler')
+    ) {
       breakdown.architecture += r.score
     }
-    if (r.name.includes('controller')) breakdown.api += r.score
+    if (r.name.includes('controller') || r.name.includes('deprecated-api')) breakdown.api += r.score
+    if (r.name.includes('test')) breakdown.testing += r.score
   }
 
   return { total, breakdown, failures }

@@ -1,0 +1,6 @@
+{
+  "requirePluralResource": true,
+  "disallowVerbPath": true,
+  "requireTaskController": true,
+  "requireScheduleModuleBootstrap": true
+}

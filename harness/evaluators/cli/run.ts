@@ -10,6 +10,9 @@ import { evaluateCqrsPattern } from '../rules/cqrs-pattern.evaluator'
 import { evaluateErrorHandling } from '../rules/error-handling.evaluator'
 import { evaluateTestPresence } from '../rules/test-presence.evaluator'
 import { evaluateDtoValidation } from '../rules/dto-validation.evaluator'
+import { evaluateTaskQueue } from '../rules/task-queue.evaluator'
+import { evaluateScheduler } from '../rules/scheduler.evaluator'
+import { evaluateDeprecatedApi } from '../rules/deprecated-api.evaluator'
 import { aggregate } from '../shared/score'
 
 const taskRoot = process.argv[2]
@@ -28,7 +31,10 @@ const results = [
   evaluateCqrsPattern(submissionRoot),
   evaluateErrorHandling(submissionRoot),
   evaluateTestPresence(submissionRoot),
-  evaluateDtoValidation(submissionRoot)
+  evaluateDtoValidation(submissionRoot),
+  evaluateTaskQueue(submissionRoot),
+  evaluateScheduler(submissionRoot),
+  evaluateDeprecatedApi(submissionRoot)
 ]
 
 const { total, breakdown, failures } = aggregate(results)

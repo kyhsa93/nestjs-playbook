@@ -1,0 +1,1 @@
+{"id":"new-domain/domain-with-task-queue","category":"new-domain","difficulty":"hard","workflow":["RA","DM","TD","TE","IM","VA"],"requires":["directory-structure","repository-pattern","scheduling"],"scoringProfile":"default"}

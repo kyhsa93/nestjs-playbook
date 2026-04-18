@@ -1,0 +1,7 @@
+{
+  "enforceLayerDependency": true,
+  "disallowAwsSdkInApplication": true,
+  "requireTaskQueuePattern": true,
+  "requireTaskTypeUniqueness": true,
+  "requireTransactionWrappedEnqueue": true
+}

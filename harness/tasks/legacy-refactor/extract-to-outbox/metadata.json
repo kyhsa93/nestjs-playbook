@@ -1,0 +1,1 @@
+{"id":"legacy-refactor/extract-to-outbox","category":"legacy-refactor","difficulty":"hard","workflow":["RA","DM","TD","TE","IM","VA"],"requires":["scheduling","domain-events"],"scoringProfile":"default"}
