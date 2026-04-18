@@ -390,18 +390,18 @@ export class OrderTaskController {
 
 ```typescript
 // ❌ HTTP Controller 패턴을 흉내내면 안 됨 — 실패가 소실됨
-@TaskConsumer('order.archive')
-public async archive(payload: { orderId: string }): Promise<void> {
-  return this.orderCommandService.archiveOrder(payload.orderId).catch((error) => {
+@TaskConsumer('order.notify')
+public async notify(payload: NotifyOrderCommand): Promise<void> {
+  return this.orderCommandService.notify(payload).catch((error) => {
     this.logger.error(error)
     throw generateErrorResponse(...)   // HttpException — Task 문맥에서는 무의미
   })
 }
 
 // ✅ 그냥 호출하고 예외는 위로 — TaskQueueConsumer가 처리
-@TaskConsumer('order.archive')
-public async archive(payload: { orderId: string }): Promise<void> {
-  await this.orderCommandService.archiveOrder(payload.orderId)
+@TaskConsumer('order.notify')
+public async notify(payload: NotifyOrderCommand): Promise<void> {
+  await this.orderCommandService.notify(payload)
 }
 ```
 
@@ -784,6 +784,7 @@ public async archive(payload: ArchiveOrderCommand): Promise<void> {
 ```
 
 - payload 타입을 Application의 Command 클래스(`ArchiveOrderCommand`)로 선언하여 호출 계약을 명확히 한다. Service 호출 시 Command 객체를 그대로 전달 — HTTP Controller의 `new CommandClass(body)` → Service 호출 패턴과 동일.
+- **payload는 타입 힌트일 뿐 런타임에는 plain object**: SQS 메시지 body를 `JSON.parse`한 결과이므로 **Command 클래스의 인스턴스 메서드(getter/`equals()` 등)는 사용 불가**. 필드 접근만 가능. 메서드 호출이 필요하거나 validator 데코레이터로 검증해야 하면 [payload 검증](#payload-검증) 섹션의 `plainToInstance(Command, payload)` 패턴을 적용한다.
 - Task Controller 코드가 1단계와 동일하게 간결. ledger 로직은 프레임워크가 처리.
 - **semantics는 "record-before-execute"**: 핸들러 실패해도 ledger가 남아 재시도가 skip됨. 즉 **"한 번 시도 후 성공 여부와 무관하게 기억"**. 대부분의 실무 케이스에 충분하다.
 - **`idempotencyKey` 함수 자체의 예외**: 키 생성 중 throw하면 dispatch가 예외 전파 → 메시지 삭제되지 않음 → 재수신 → DLQ. 키 생성 로직은 payload 필드 접근만 하도록 단순하게 유지한다.
@@ -1027,9 +1028,9 @@ describe('OrderTaskController', () => {
   const orderCommandService = { archiveOrder: jest.fn() } as any
   const controller = new OrderTaskController(orderCommandService)
 
-  test('archive는 CommandService.archiveOrder를 호출한다', async () => {
+  test('archive는 CommandService.archiveOrder에 Command 객체를 전달한다', async () => {
     await controller.archive({ orderId: 'o1' })
-    expect(orderCommandService.archiveOrder).toHaveBeenCalledWith('o1')
+    expect(orderCommandService.archiveOrder).toHaveBeenCalledWith({ orderId: 'o1' })
   })
 })
 ```
