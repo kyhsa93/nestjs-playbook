@@ -246,7 +246,7 @@ export class TaskConsumerRegistry {
 }
 ```
 
-- **ledger 기록은 dispatch 직전(record-before-execute)**: idempotencyKey가 지정된 Task는 **핸들러 호출 전에** ledger에 insert 시도. 이후 핸들러가 실패해도 ledger는 남으므로, 재시도 시 `already-executed`로 스킵된다. 핸들러 성공/실패와 ledger의 원자성이 필요하면 [멱등성 — 강한 원자성이 필요한 경우](#3단계--강한-원자성이-필요한-경우)를 참조.
+- **ledger 기록은 dispatch 직전(record-before-execute)**: idempotencyKey가 지정된 Task는 **핸들러 호출 전에** ledger에 insert 시도. 이후 핸들러가 실패해도 ledger는 남으므로, 재시도 시 `already-executed`로 스킵된다. 핸들러 성공/실패와 ledger의 원자성이 필요하면 [강한 원자성 (Level 3)](#강한-원자성-level-3--드문-케이스)을 참조.
 - **ledger 사용이 불필요한 Task**: 본질적으로 멱등한 Task(예: `cleanup-expired` 배치는 "만료 상태만 archive"이므로 여러 번 실행해도 결과 동일)는 `idempotencyKey`를 지정하지 않는다. Ledger 테이블 비용을 아낀다.
 
 ## `TaskQueueConsumer` — SQS 폴링
@@ -766,7 +766,9 @@ FIFO 큐에서 **같은 `MessageGroupId`를 가진 메시지는 엄격히 순차
 
 SQS는 **at-least-once delivery**를 보장하므로, `@TaskConsumer` 메서드가 호출하는 Command는 **반드시 멱등해야 한다**. 멱등성 확보 수단은 3단계로 구분한다.
 
-### 1단계 — 본질적 멱등성 (기본)
+> **참고**: 여기서 설명하는 3단계 모델(본질적 멱등성 / 프레임워크 ledger / 강한 원자성)은 Task뿐 아니라 **Domain Event의 EventHandler에도 동일하게 적용**된다. `@HandleEvent` 핸들러도 at-least-once 전제이므로 부작용 큰 핸들러는 동일한 ledger 전략이 유효하다. Domain Event 쪽 간단 예시는 [domain-events.md — 이벤트 핸들러 멱등성](./domain-events.md#이벤트-핸들러-멱등성)을 참조.
+
+### 본질적 멱등성 (Level 1 · 기본)
 
 Command 자체가 반복 실행되어도 결과가 동일하면 추가 장치 불필요. Cron 배치(상태 기반 필터링 + 최종 상태로 덮어쓰기)가 대표적.
 
@@ -785,7 +787,7 @@ public async cleanupExpiredOrders(): Promise<number> {
 
 → Task Controller는 `@TaskConsumer('order.cleanup-expired')` — **옵션 없음**. 가장 가볍다.
 
-### 2단계 — 프레임워크 레벨 ledger (기본 권장)
+### 프레임워크 레벨 ledger (Level 2 · 기본 권장)
 
 엔티티 단위 중복 실행을 차단해야 하는 Task(재결제·외부 API 호출 등 부작용 있는 작업)는 **`@TaskConsumer`의 `idempotencyKey` 옵션**으로 `TaskExecutionLog`에 ledger를 남긴다. `TaskConsumerRegistry`가 dispatch **직전에** ledger에 insert 시도하고, 이미 있으면 `'already-executed'` 반환 → 메서드 호출 skip → Consumer가 메시지 정상 삭제.
 
@@ -804,7 +806,7 @@ public async archive(payload: ArchiveOrderCommand): Promise<void> {
 - **semantics는 "record-before-execute"**: 핸들러 실패해도 ledger가 남아 재시도가 skip됨. 즉 **"한 번 시도 후 성공 여부와 무관하게 기억"**. 대부분의 실무 케이스에 충분하다.
 - **`idempotencyKey` 함수 자체의 예외**: 키 생성 중 throw하면 dispatch가 예외 전파 → 메시지 삭제되지 않음 → 재수신 → DLQ. 키 생성 로직은 payload 필드 접근만 하도록 단순하게 유지한다.
 
-### 3단계 — 강한 원자성이 필요한 경우
+### 강한 원자성 (Level 3 · 드문 케이스)
 
 "핸들러가 성공해야만 ledger가 남는다"는 엄격한 원자성이 필요하면(드문 케이스), Task Controller가 `TaskExecutionLog`를 **직접 주입받아 `transactionManager.run` 안에서 호출**한다. 프레임워크의 `idempotencyKey`는 지정하지 **않는다**(지정하면 이중 체크).
 
@@ -996,7 +998,7 @@ public async dispatchShipment(payload: object): Promise<void> {
 }
 ```
 
-검증 실패 후 **재처리가 필요한 케이스**(외부 시스템이 payload를 보내주는 등)는 `idempotencyKey`를 쓰지 않고 [3단계 강한 원자성 패턴](#3단계--강한-원자성이-필요한-경우)을 쓴다 — 트랜잭션 안에서 검증 → ledger → Command 순서로 직접 제어.
+검증 실패 후 **재처리가 필요한 케이스**(외부 시스템이 payload를 보내주는 등)는 `idempotencyKey`를 쓰지 않고 [강한 원자성 패턴 (Level 3)](#강한-원자성-level-3--드문-케이스)을 쓴다 — 트랜잭션 안에서 검증 → ledger → Command 순서로 직접 제어.
 
 ## 긴 Task와 VisibilityTimeout 하트비트
 

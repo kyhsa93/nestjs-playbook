@@ -405,6 +405,8 @@ SQS_DOMAIN_EVENT_QUEUE_URL=http://localhost:4566/000000000000/domain-events
 
 SQS는 at-least-once 전달을 보장한다. 같은 메시지가 **중복 수신**될 수 있으므로 모든 EventHandler는 **멱등(idempotent)** 하게 구현해야 한다.
 
+> **참고**: Task Queue의 `@TaskConsumer`에도 동일한 at-least-once 전제가 적용되며, 그쪽은 **프레임워크 레벨 ledger(`idempotencyKey` 옵션)**·**Level 3 강한 원자성** 등 3단계 모델을 제공한다. EventHandler와 Task Controller 모두에 공통되는 패턴이며 자세한 구조는 [scheduling.md — 멱등성](./scheduling.md#멱등성)을 참조한다. EventHandler도 부작용 큰 경우 (재결제·외부 API 호출 등) 동일한 ledger 전략 적용을 권장한다.
+
 ```typescript
 // 올바른 방식 — 멱등한 핸들러
 @HandleEvent('OrderCancelled')
