@@ -328,13 +328,16 @@
 [ ] Cron 작업(@Cron, @Interval)이 Infrastructure 레이어에 배치되어 있는가?
     → Application/Domain 레이어에 스케줄링 데코레이터 사용 금지
 [ ] Scheduler(@Cron 핸들러)가 비즈니스 로직을 직접 실행하지 않고 TaskQueue.enqueue만 호출하는가?
+[ ] Scheduler의 @Cron 핸들러가 try-catch + logger.error로 실패를 명시적으로 로깅하는가?
+    → @nestjs/schedule은 Cron 핸들러 예외를 조용히 삼키므로 직접 로깅하지 않으면 실패가 관찰 불가
 [ ] TaskQueue.enqueue가 task_outbox에 row를 쓰고 TaskOutboxRelay가 SQS에 발행하는 Outbox 경로를 따르는가?
     → Command 트랜잭션과 Task 적재의 원자성 확보 (dual-write 차단)
 [ ] Ad-hoc Task 적재가 Command의 트랜잭션(transactionManager.run) 안에서 호출되는가?
 [ ] Task Controller가 Interface 레이어(src/<domain>/interface/)에 배치되고 CommandService(+ 필요 시 TaskExecutionLog)를 주입받아 Command만 실행하는가?
     → HTTP Controller와 동일한 입력 어댑터. 조건 분기·비즈니스 로직 금지
-[ ] Task Controller가 DataSource / Repository<Entity> 등을 직접 주입받고 있지는 않은가?
-    → 필요 시 task-queue 모듈의 abstract(TaskExecutionLog)를 주입
+[ ] Task Controller가 DataSource / Repository<Entity> / TaskExecutionLog 등을 직접 주입받고 있지는 않은가?
+    → 기본은 CommandService만 주입. ledger는 @TaskConsumer의 idempotencyKey 옵션으로 프레임워크에 위임
+    → 강한 원자성이 필요한 예외 케이스만 TaskExecutionLog 직접 주입
 [ ] Task Controller가 에러를 그대로 throw하는가?
     → HTTP Controller의 .catch + generateErrorResponse 패턴 금지. 예외는 TaskQueueConsumer가 catch하여 재시도/DLQ에 위임
 [ ] Task Controller의 메서드에 @TaskConsumer('taskType')가 부여되어 있는가?
@@ -345,7 +348,7 @@
     → try-catch로 예외를 삼키고 DeleteMessage를 호출하면 실패가 소실됨
 [ ] Task 큐와 DLQ가 모두 구성되어 있고 maxReceiveCount(RedrivePolicy)가 설정되어 있는가?
 [ ] @TaskConsumer 메서드가 호출하는 Command가 멱등하게 구현되어 at-least-once 전달에도 결과가 동일한가?
-    → 엔티티 단위 멱등성 필요 시 TaskExecutionLog.recordOnce()로 ledger 보호
+    → 엔티티 단위 멱등성 필요 시 @TaskConsumer의 idempotencyKey 옵션 지정 (프레임워크 ledger 자동 적용)
 [ ] 긴 Task(처리 시간 예측 불가)는 @TaskConsumer의 heartbeat 옵션을 사용하는가?
     → 초기 VisibilityTimeout은 짧게, 필요한 taskType만 하트비트로 연장
 [ ] TaskQueueConsumer가 OnApplicationShutdown으로 pollPromise를 await하여 in-flight Task 완료를 대기하는가?

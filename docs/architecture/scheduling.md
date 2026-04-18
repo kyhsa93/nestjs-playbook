@@ -146,12 +146,14 @@ type HandlerEntry = {
   handlerClass: new (...args: unknown[]) => unknown
   method: string
   heartbeat?: HeartbeatConfig
+  idempotencyKey?: (payload: any) => string
 }
 
 const TASK_HANDLER_MAP = new Map<string, HandlerEntry>()
 
 export type TaskConsumerOptions = {
   heartbeat?: HeartbeatConfig
+  idempotencyKey?: (payload: any) => string
 }
 
 export function TaskConsumer(taskType: string, options?: TaskConsumerOptions): MethodDecorator {
@@ -162,7 +164,8 @@ export function TaskConsumer(taskType: string, options?: TaskConsumerOptions): M
     TASK_HANDLER_MAP.set(taskType, {
       handlerClass: target.constructor as new (...args: unknown[]) => unknown,
       method: propertyKey as string,
-      heartbeat: options?.heartbeat
+      heartbeat: options?.heartbeat,
+      idempotencyKey: options?.idempotencyKey
     })
   }
 }
@@ -173,7 +176,7 @@ export function getTaskHandler(taskType: string): HandlerEntry | undefined {
 ```
 
 - **`heartbeat` 옵션(선택)**: 장기 Task에 한해 `{ intervalMs, extendSeconds }`를 지정하면 `TaskQueueConsumer`가 처리 중 주기적으로 `ChangeMessageVisibility`를 호출한다. 자세한 내용은 하단 [긴 Task와 VisibilityTimeout 하트비트](#긴-task와-visibilitytimeout-하트비트)를 참조한다.
-
+- **`idempotencyKey` 옵션(선택)**: payload에서 고유 키를 뽑는 함수를 지정하면 `TaskConsumerRegistry`가 dispatch 전에 **`TaskExecutionLog`로 중복 실행을 프레임워크 레벨에서 차단**한다. Task Controller는 ledger 코드를 작성하지 않아도 된다. 자세한 내용은 [멱등성](#멱등성) 참조.
 - **taskType은 전역 유일**: Task는 정확히 하나의 핸들러가 실행되어야 한다. 중복 등록은 부트스트랩 시점에 바로 실패시킨다.
 - **등록 시점은 class 평가 시점(import 시점)**: 데코레이터는 파일이 import되어 class 본문이 평가될 때 `TASK_HANDLER_MAP`에 엔트리를 추가한다. 따라서 **Task Controller는 반드시 어떤 모듈의 `providers`에 등록되어야** 모듈 로딩 과정에서 파일이 import되어 데코레이터가 발화한다. providers에 없으면 class 파일 자체가 로드되지 않아 `TaskQueueConsumer`가 해당 `taskType`을 찾지 못한다.
 
@@ -183,14 +186,20 @@ export function getTaskHandler(taskType: string): HandlerEntry | undefined {
 
 ```typescript
 // src/task-queue/task-consumer-registry.ts
-import { Injectable } from '@nestjs/common'
+import { Injectable, Logger } from '@nestjs/common'
 import { ModuleRef } from '@nestjs/core'
 
 import { HeartbeatConfig, getTaskHandler } from './task-consumer.decorator'
+import { TaskExecutionLog } from './task-execution-log'
 
 @Injectable()
 export class TaskConsumerRegistry {
-  constructor(private readonly moduleRef: ModuleRef) {}
+  private readonly logger = new Logger(TaskConsumerRegistry.name)
+
+  constructor(
+    private readonly moduleRef: ModuleRef,
+    private readonly executionLog: TaskExecutionLog
+  ) {}
 
   public getHeartbeat(taskType: string): HeartbeatConfig | undefined {
     return getTaskHandler(taskType)?.heartbeat
@@ -201,11 +210,29 @@ export class TaskConsumerRegistry {
     if (!entry) {
       throw new Error(`No @TaskConsumer registered for taskType: ${taskType}`)
     }
+
+    // 프레임워크 레벨 멱등성 (idempotencyKey 옵션이 있을 때만)
+    if (entry.idempotencyKey) {
+      const key = entry.idempotencyKey(payload)
+      const result = await this.executionLog.recordOnce(key, taskType)
+      if (result === 'already-executed') {
+        this.logger.log({
+          message: '중복 수신 — ledger에 이미 기록, 스킵',
+          task_type: taskType,
+          idempotency_key: key
+        })
+        return   // 정상 반환 → Consumer가 메시지 삭제
+      }
+    }
+
     const handler = this.moduleRef.get(entry.handlerClass, { strict: false })
     await (handler as Record<string, (p: object) => Promise<void>>)[entry.method](payload)
   }
 }
 ```
+
+- **ledger 기록은 dispatch 직전(record-before-execute)**: idempotencyKey가 지정된 Task는 **핸들러 호출 전에** ledger에 insert 시도. 이후 핸들러가 실패해도 ledger는 남으므로, 재시도 시 `already-executed`로 스킵된다. 핸들러 성공/실패와 ledger의 원자성이 필요하면 [멱등성 — 강한 원자성이 필요한 경우](#강한-원자성이-필요한-경우)를 참조.
+- **ledger 사용이 불필요한 Task**: 본질적으로 멱등한 Task(예: `cleanup-expired` 배치는 "만료 상태만 archive"이므로 여러 번 실행해도 결과 동일)는 `idempotencyKey`를 지정하지 않는다. Ledger 테이블 비용을 아낀다.
 
 ## 3단계: `TaskQueueConsumer` — SQS 폴링
 
@@ -317,6 +344,7 @@ export class TaskQueueConsumer implements OnModuleInit, OnApplicationShutdown {
 - **Graceful Shutdown은 `pollPromise`를 await**: `onApplicationShutdown`이 루프 종료를 대기하지 않으면 NestJS가 앱을 종료시켜 in-flight Task가 중간에 끊긴다. 위 구현처럼 `pollPromise`를 저장하고 shutdown에서 await해야 한다. 종료 지연이 염려되면 장기 Task는 하단 [긴 Task와 VisibilityTimeout 하트비트](#긴-task와-visibilitytimeout-하트비트) 패턴을 적용한다.
 - **`MaxNumberOfMessages`는 10까지 배치 수신 가능**: 1로 두면 메시지당 왕복 1회라 처리량이 낮다. 병렬성은 인스턴스 수 × batch 크기로 조절한다.
 - `VisibilityTimeout`은 가장 긴 Task의 최대 처리 시간보다 넉넉히 설정한다.
+- **Task Controller는 NestJS 기본 Singleton 스코프**: 현재 Consumer 구현은 배치 내 메시지를 `for` 루프로 순차 처리하므로 동일 Task Controller 인스턴스가 한 번에 하나의 메시지만 다룬다. 향후 병렬 dispatch로 전환할 경우를 대비해 **Task Controller 메서드에 공유 가변 상태(instance field 누적, static 변수 등)를 두지 않는다**. HTTP Controller의 stateless 원칙과 동일.
 
 ## 4단계: `TaskController` — `@TaskConsumer` 메서드로 Command 실행 (Interface 레이어)
 
@@ -335,13 +363,17 @@ export class OrderTaskController {
 
   constructor(private readonly orderCommandService: OrderCommandService) {}
 
+  // 본질적으로 멱등한 Task — idempotencyKey 불필요
   @TaskConsumer('order.cleanup-expired')
   public async cleanupExpired(): Promise<void> {
     const count = await this.orderCommandService.cleanupExpiredOrders()
     this.logger.log({ message: '만료 주문 정리', cleaned_count: count })
   }
 
-  @TaskConsumer('order.archive')
+  // 엔티티 단위 중복 실행 방어가 필요한 Task — idempotencyKey 지정
+  @TaskConsumer('order.archive', {
+    idempotencyKey: (payload: { orderId: string }) => `order.archive-${payload.orderId}`
+  })
   public async archive(payload: { orderId: string }): Promise<void> {
     await this.orderCommandService.archiveOrder(payload.orderId)
   }
@@ -349,6 +381,8 @@ export class OrderTaskController {
 ```
 
 - **로직 없이 Command 위임**: Task Controller는 `CommandService`의 Command 메서드를 호출할 뿐이다. 조건 분기나 비즈니스 규칙을 넣지 않는다. HTTP Controller와 동일한 역할.
+- **멱등성은 데코레이터 옵션으로**: Task Controller 안에서 ledger 코드를 직접 쓰지 않는다. `@TaskConsumer`의 `idempotencyKey` 옵션을 지정하면 `TaskConsumerRegistry`가 dispatch 전에 `TaskExecutionLog`로 중복을 차단한다.
+- **DB 직접 주입 금지**: Task Controller에 `DataSource`/`Repository<Entity>`를 주입하지 않는다. Interface 레이어는 CommandService만 의존한다. 공용 관심사(ledger, heartbeat)는 task-queue 프레임워크가 처리한다.
 - **payload 타입은 메서드 시그니처에 명시**: 호출 계약을 명확히 한다. 필요 시 class-validator로 런타임 검증을 추가한다. (하단 [payload 검증](#payload-검증) 참조)
 - **Interface DTO 규칙 적용**: payload 타입을 Application의 Command 클래스로 그대로 쓰거나, 필요 시 Interface DTO로 `extends`하여 thin wrapper로 둔다. (HTTP RequestBody와 동일한 방식 — [layer-architecture.md](./layer-architecture.md#interface-dto) 참조)
 - **에러 처리는 HTTP Controller와 다름**: HTTP Controller의 `.catch(error => { logger.error; throw generateErrorResponse(...) })` 패턴을 쓰지 **않는다**. Task Controller는 **예외를 그대로 위로 던진다** — `TaskQueueConsumer`가 catch하여 메시지를 삭제하지 않고, visibility timeout 후 재수신/재시도 → DLQ 경로를 밟는다. `.catch`로 감싸면 예외가 삼켜져 메시지가 정상 삭제되고 실패가 소실된다.
@@ -567,17 +601,24 @@ export class OrderCleanupScheduler {
   @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
   public async enqueueDailyCleanup(): Promise<void> {
     const dedupId = `order.cleanup-expired-${new Date().toISOString().slice(0, 10)}`
-    await this.taskQueue.enqueue(
-      'order.cleanup-expired',
-      {},
-      { groupId: 'order.cleanup', deduplicationId: dedupId }
-    )
-    this.logger.log({ message: '만료 주문 정리 Task 적재', dedup_id: dedupId })
+    try {
+      await this.taskQueue.enqueue(
+        'order.cleanup-expired',
+        {},
+        { groupId: 'order.cleanup', deduplicationId: dedupId }
+      )
+      this.logger.log({ message: '만료 주문 정리 Task 적재', dedup_id: dedupId })
+    } catch (error) {
+      // @nestjs/schedule은 Cron 핸들러의 예외를 조용히 삼키므로 명시적으로 로깅
+      this.logger.error({ message: '만료 주문 정리 Task 적재 실패', dedup_id: dedupId, error })
+    }
   }
 }
 ```
 
 - **`MessageDeduplicationId`를 날짜 단위로 고정**: 다중 인스턴스가 동일 Cron 타이밍에 적재해도 5분 중복 제거 윈도우에서 1건만 큐에 들어간다. Cron 중복 실행 해결의 핵심.
+- **`@nestjs/schedule`의 예외 무음화**: Cron 핸들러 내부 예외는 로깅 없이 삼켜진다. try-catch + `logger.error`로 **명시적 가시성 확보** 필수.
+- **실패는 다음 Cron tick이 복구**: 날짜 기반 `deduplicationId`는 자연 유일하므로 실패 후 다음 tick에서 다시 적재되어도 `task_outbox`에 중복 row가 쌓이거나 SQS에 중복 배달되지 않는다. (DB 장애로 outbox write 자체가 실패하는 경우는 장애 해소 후 다음 tick까지 기다리거나 긴급 수동 트리거.)
 
 ## 모듈 등록
 
@@ -704,16 +745,38 @@ public async archive(payload: object): Promise<void> {
 
 - 검증 실패도 예외이므로 메시지는 삭제되지 않고 재시도된다. 동일 payload는 매번 같은 이유로 실패하므로 `maxReceiveCount` 초과 시 DLQ로 이동한다. **독성 payload가 자연스럽게 격리**되는 구조.
 
+### 검증 + 멱등성 결합
+
+payload 검증과 프레임워크 레벨 멱등성(`idempotencyKey`)을 함께 적용할 때 주의할 점: **프레임워크의 ledger 기록은 핸들러 호출 전에 일어난다**. 즉 payload가 유효하지 않아 핸들러가 throw해도 ledger는 이미 기록되므로, 재시도 시 `already-executed`로 skip되어 **잘못된 payload가 영원히 처리되지 못할 수 있다**.
+
+검증이 필수적인 Task는 **생산자 측에서 payload를 완전히 제어**하거나, 검증이 실패하면 즉시 DLQ로 보내는 방식(즉 재시도 무의미)으로 운영하는 것이 맞다.
+
+```typescript
+@TaskConsumer('order.archive', {
+  idempotencyKey: (payload: { orderId: string }) => `order.archive-${payload.orderId}`
+})
+public async archive(payload: object): Promise<void> {
+  // 검증은 ledger 이후에 실행됨 — producer가 제어하는 payload여야 안전
+  const command = plainToInstance(ArchiveOrderCommand, payload)
+  await validateOrReject(command)
+  await this.orderCommandService.archiveOrder(command.orderId)
+}
+```
+
+검증 실패 후 **재처리가 필요한 케이스**(외부 시스템이 payload를 보내주는 등)는 `idempotencyKey`를 쓰지 않고 [3단계 강한 원자성 패턴](#3단계--강한-원자성이-필요한-경우)을 쓴다 — 트랜잭션 안에서 검증 → ledger → Command 순서로 직접 제어.
+
 ## 멱등성
 
-SQS는 **at-least-once delivery**를 보장하므로, `@TaskConsumer` 메서드가 호출하는 Command는 **반드시 멱등해야 한다**.
+SQS는 **at-least-once delivery**를 보장하므로, `@TaskConsumer` 메서드가 호출하는 Command는 **반드시 멱등해야 한다**. 멱등성 확보 수단은 3단계로 구분한다.
+
+### 1단계 — 본질적 멱등성 (기본)
+
+Command 자체가 반복 실행되어도 결과가 동일하면 추가 장치 불필요. Cron 배치(상태 기반 필터링 + 최종 상태로 덮어쓰기)가 대표적.
 
 ```typescript
 public async cleanupExpiredOrders(): Promise<number> {
   const { orders } = await this.orderRepository.findOrders({
-    status: ['expired'],
-    take: 100,
-    page: 0
+    status: ['expired'], take: 100, page: 0
   })
   for (const order of orders) {
     order.archive()                 // 이미 archive면 내부에서 무시
@@ -723,11 +786,43 @@ public async cleanupExpiredOrders(): Promise<number> {
 }
 ```
 
-엔티티 단위 멱등성이 필요하면 **처리 이력 ledger 테이블**로 중복 실행을 방어한다. payload에 고유 `taskId`를 포함시키고(예: `order-archive-<orderId>-<yyyymmdd>`), 처리 시 ledger에 insert를 시도하여 unique 위반 시 이미 처리된 것으로 간주한다.
+→ Task Controller는 `@TaskConsumer('order.cleanup-expired')` — **옵션 없음**. 가장 가볍다.
 
-Task Controller(Interface 레이어)가 DataSource를 직접 주입하면 레이어 컨벤션을 깨므로, task-queue 모듈이 **`TaskExecutionLog` abstract class**를 제공하고 Task Controller는 이 인터페이스만 주입받는다.
+### 2단계 — 프레임워크 레벨 ledger (기본 권장)
 
-### Entity / 헬퍼
+엔티티 단위 중복 실행을 차단해야 하는 Task(재결제·외부 API 호출 등 부작용 있는 작업)는 **`@TaskConsumer`의 `idempotencyKey` 옵션**으로 `TaskExecutionLog`에 ledger를 남긴다. `TaskConsumerRegistry`가 dispatch **직전에** ledger에 insert 시도하고, 이미 있으면 `'already-executed'` 반환 → 메서드 호출 skip → Consumer가 메시지 정상 삭제.
+
+```typescript
+@TaskConsumer('order.archive', {
+  idempotencyKey: (payload: { orderId: string }) => `order.archive-${payload.orderId}`
+})
+public async archive(payload: { orderId: string }): Promise<void> {
+  await this.orderCommandService.archiveOrder(payload.orderId)
+}
+```
+
+- Task Controller 코드가 1단계와 동일하게 간결. ledger 로직은 프레임워크가 처리.
+- **semantics는 "record-before-execute"**: 핸들러 실패해도 ledger가 남아 재시도가 skip됨. 즉 **"한 번 시도 후 성공 여부와 무관하게 기억"**. 대부분의 실무 케이스에 충분하다.
+
+### 3단계 — 강한 원자성이 필요한 경우
+
+"핸들러가 성공해야만 ledger가 남는다"는 엄격한 원자성이 필요하면(드문 케이스), Task Controller가 `TaskExecutionLog`를 **직접 주입받아 `transactionManager.run` 안에서 호출**한다. 프레임워크의 `idempotencyKey`는 지정하지 **않는다**(지정하면 이중 체크).
+
+```typescript
+@TaskConsumer('order.charge')
+public async charge(payload: { taskId: string; orderId: string; amount: number }): Promise<void> {
+  await this.transactionManager.run(async () => {
+    const result = await this.executionLog.recordOnce(payload.taskId, 'order.charge')
+    if (result === 'already-executed') return
+    await this.orderCommandService.chargeOrder(payload.orderId, payload.amount)
+  })
+}
+```
+
+- Command 실패 → 트랜잭션 롤백 → ledger 롤백 → 재시도 시 정상 처리됨 (진짜 "exactly-once-on-success").
+- 단점: Task Controller가 `TaskExecutionLog` + `TransactionManager`를 직접 주입받아 코드가 늘어난다. 3단계는 결제·외부 트랜잭션 등 금액이 걸린 Task에만 제한적으로 사용한다.
+
+### Entity / 헬퍼 (프레임워크 내부)
 
 ```typescript
 // src/task-queue/task-execution-log.entity.ts
@@ -761,6 +856,8 @@ export function isUniqueViolation(error: unknown): boolean {
 ```
 
 ### `TaskExecutionLog` 인터페이스 + 구현체
+
+`TaskConsumerRegistry`가 주입받아 사용하며(2단계), 드물게 Task Controller가 직접 주입받을 수도 있다(3단계).
 
 ```typescript
 // src/task-queue/task-execution-log.ts
@@ -803,34 +900,6 @@ export class TaskExecutionLogDb extends TaskExecutionLog {
   }
 }
 ```
-
-### Task Controller 적용
-
-```typescript
-@Injectable()
-export class OrderTaskController {
-  private readonly logger = new Logger(OrderTaskController.name)
-
-  constructor(
-    private readonly orderCommandService: OrderCommandService,
-    private readonly executionLog: TaskExecutionLog    // abstract class
-  ) {}
-
-  @TaskConsumer('order.archive')
-  public async archive(payload: { taskId: string; orderId: string }): Promise<void> {
-    const result = await this.executionLog.recordOnce(payload.taskId, 'order.archive')
-    if (result === 'already-executed') {
-      this.logger.log({ message: '중복 수신 — 이미 처리됨', task_id: payload.taskId })
-      return   // 예외를 던지지 않음: SQS에서 정상 삭제되어야 함
-    }
-    await this.orderCommandService.archiveOrder(payload.orderId)
-  }
-}
-```
-
-- **`already-executed`는 정상 경로**: 이미 처리된 Task의 재전달. 메서드를 정상 반환해 `TaskQueueConsumer`가 메시지를 삭제하도록 한다. 예외를 던지면 재시도되어 루프에 빠진다.
-- **ledger 기록은 비즈니스 로직 이전**: 이후 로직이 실패해도 ledger가 남아있다면 재처리가 차단되어 "정확히 한 번" 의미론에 가까워진다. 비즈니스 로직과 ledger를 완전히 원자적으로 묶고 싶다면 동일 트랜잭션으로 감싼다(`TaskExecutionLogDb`가 `TransactionManager`에 참여하므로 자동).
-- **DataSource 직접 주입 금지**: Task Controller는 Interface 레이어이므로 `DataSource`/`Repository<Entity>` 직접 주입 금지. `TaskExecutionLog` abstract만 주입받아 관심사를 격리.
 
 ### Ledger cleanup
 
@@ -899,25 +968,36 @@ DLQ에 쌓인 메시지는 **코드 버그나 독성 페이로드의 증거**다
 
 ### Task Controller — 단위 테스트
 
-CommandService와 TaskExecutionLog를 목으로 주입하고 메서드를 직접 호출한다. 큐/SQS 불필요.
+CommandService만 목으로 주입하고 메서드를 직접 호출한다. 큐/SQS/ledger 불필요 — Task Controller는 순수 위임이므로 비즈니스 동작만 검증.
 
 ```typescript
 describe('OrderTaskController', () => {
   const orderCommandService = { archiveOrder: jest.fn() } as any
-  const executionLog = { recordOnce: jest.fn() } as any
-  const controller = new OrderTaskController(orderCommandService, executionLog)
+  const controller = new OrderTaskController(orderCommandService)
 
-  test('이미 처리된 Task는 Command를 호출하지 않는다', async () => {
-    executionLog.recordOnce.mockResolvedValue('already-executed')
-    await controller.archive({ taskId: 't1', orderId: 'o1' })
-    expect(orderCommandService.archiveOrder).not.toHaveBeenCalled()
-  })
-
-  test('신규 Task는 Command를 실행한다', async () => {
-    executionLog.recordOnce.mockResolvedValue('recorded')
-    await controller.archive({ taskId: 't1', orderId: 'o1' })
+  test('archive는 CommandService.archiveOrder를 호출한다', async () => {
+    await controller.archive({ orderId: 'o1' })
     expect(orderCommandService.archiveOrder).toHaveBeenCalledWith('o1')
   })
+})
+```
+
+> 멱등성 ledger는 `TaskConsumerRegistry` 레벨에서 처리되므로 Task Controller 단위 테스트의 관심사가 아니다. ledger 동작은 `TaskConsumerRegistry` 또는 `TaskExecutionLogDb` 통합 테스트에서 검증한다.
+
+### `TaskConsumerRegistry` — 통합 테스트
+
+`idempotencyKey` 옵션이 있는 Task가 실제로 ledger를 기록하고 중복 호출 시 skip되는지 검증.
+
+```typescript
+test('idempotencyKey가 있는 Task는 두 번째 호출에서 skip된다', async () => {
+  // OrderTaskController가 등록된 상태라고 가정
+  const controller = moduleRef.get(OrderTaskController)
+  const spy = jest.spyOn(controller, 'archive')
+
+  await registry.dispatch('order.archive', { orderId: 'o1' })
+  await registry.dispatch('order.archive', { orderId: 'o1' })
+
+  expect(spy).toHaveBeenCalledTimes(1)   // 두 번째는 ledger skip
 })
 ```
 
@@ -994,8 +1074,10 @@ async warmupCache() { /* ... */ }
 - **FIFO + MessageDeduplicationId**: 다중 인스턴스 Cron 중복 적재는 큐 레벨에서 방지한다.
 - **실패 시 메시지 삭제 금지**: visibility timeout → 재수신 → DLQ 구조를 신뢰한다. try-catch로 삼키고 Delete하면 실패가 소실된다.
 - **긴 Task는 `@TaskConsumer` heartbeat 옵션**: 초기 `VisibilityTimeout`을 짧게 잡고, 필요한 taskType에만 `heartbeat`을 지정해 처리 중 연장한다.
-- **Command는 멱등하게**: at-least-once 전달이므로 동일 Task가 2회 이상 실행되어도 결과가 같아야 한다. 엔티티 단위 멱등성이 필요하면 `TaskExecutionLog.recordOnce()` ledger 패턴으로 방어.
-- **Task Controller는 DB 직접 접근 금지**: `DataSource`/`Repository<Entity>`를 주입하지 않는다. 공용 관심사는 task-queue 모듈의 abstract(`TaskExecutionLog` 등)를 주입.
+- **Command는 멱등하게**: at-least-once 전달이므로 동일 Task가 2회 이상 실행되어도 결과가 같아야 한다. 3단계 전략: ① 본질적 멱등 ② `@TaskConsumer({ idempotencyKey })` 프레임워크 ledger ③ 강한 원자성이 필요하면 Task Controller에서 `TaskExecutionLog`를 직접 주입.
+- **ledger 코드는 Task Controller에 작성하지 않는다(기본)**: `idempotencyKey` 옵션으로 프레임워크가 처리. Task Controller는 CommandService 호출만 남는다.
+- **Task Controller는 DB 직접 접근 금지**: `DataSource`/`Repository<Entity>`를 주입하지 않는다. 공용 관심사(ledger, heartbeat)는 task-queue 프레임워크가 처리한다.
 - **ledger와 outbox 모두 cleanup Cron 필수**: `task_outbox` / `task_execution_log` 방치 시 무한 증가.
+- **Scheduler는 try-catch + logger.error 필수**: `@nestjs/schedule`이 예외를 삼키므로 명시적 로깅 없으면 실패가 관찰 불가능해진다.
 - **Consumer 멱등성은 최후 방어선**: Relay 다중 인스턴스 race·Graceful Shutdown 강제 종료·visibility timeout 만료 시 재수신 등 어떤 경우에도 Consumer가 멱등하면 복구된다.
 - **DLQ 필수**: 모든 Task 큐에 DLQ를 설정하고 CloudWatch 알람으로 감시한다.

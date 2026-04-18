@@ -774,10 +774,20 @@ export class OrderTaskController {
 
   constructor(private readonly orderCommandService: OrderCommandService) {}
 
+  // 본질적으로 멱등한 Task — 옵션 없음
   @TaskConsumer('order.cleanup-expired')
   public async cleanupExpired(): Promise<void> {
     const count = await this.orderCommandService.cleanupExpiredOrders()
     this.logger.log({ message: '만료 주문 정리', cleaned_count: count })
+  }
+
+  // 엔티티 단위 중복 실행 방어가 필요한 Task — idempotencyKey 옵션으로
+  // 프레임워크가 TaskExecutionLog에 ledger를 남겨 자동 skip (자세한 패턴은 scheduling.md 참고)
+  @TaskConsumer('order.archive', {
+    idempotencyKey: (payload: { orderId: string }) => `order.archive-${payload.orderId}`
+  })
+  public async archive(payload: { orderId: string }): Promise<void> {
+    await this.orderCommandService.archiveOrder(payload.orderId)
   }
 }
 ```
@@ -800,11 +810,16 @@ export class OrderCleanupScheduler {
   @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
   public async enqueueDailyCleanup(): Promise<void> {
     const dedupId = `order.cleanup-expired-${new Date().toISOString().slice(0, 10)}`
-    await this.taskQueue.enqueue(
-      'order.cleanup-expired',
-      {},
-      { groupId: 'order.cleanup', deduplicationId: dedupId }
-    )
+    try {
+      await this.taskQueue.enqueue(
+        'order.cleanup-expired',
+        {},
+        { groupId: 'order.cleanup', deduplicationId: dedupId }
+      )
+    } catch (error) {
+      // @nestjs/schedule은 Cron 핸들러 예외를 삼키므로 명시적 로깅 필수
+      this.logger.error({ message: '적재 실패', dedup_id: dedupId, error })
+    }
   }
 }
 ```
