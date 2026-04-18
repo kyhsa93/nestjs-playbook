@@ -2,6 +2,8 @@
 
 ```
 src/
+  common/                              # 공용 유틸
+    is-unique-violation.ts             # Postgres unique_violation(23505) 판별
   database/                            # 데이터베이스 모듈
     database-module.ts
     base.entity.ts                     # 공통 컬럼 (createdAt, updatedAt, deletedAt)
@@ -20,6 +22,10 @@ src/
     task-queue-outbox.ts               # Outbox 기반 구현체 (task_outbox에 write)
     task-outbox.entity.ts              # task_outbox 테이블 Entity
     task-outbox-relay.ts               # task_outbox → SQS 발행 (Cron)
+    task-execution-log.ts              # TaskExecutionLog 인터페이스 (abstract class)
+    task-execution-log-db.ts           # DB 기반 구현체
+    task-execution-log.entity.ts       # task_execution_log 테이블 Entity (멱등성 ledger)
+    task-execution-log-cleaner.ts      # ledger cleanup (Cron)
     task-consumer.decorator.ts         # @TaskConsumer 데코레이터 (heartbeat 옵션 포함)
     task-consumer-registry.ts          # taskType → Handler 라우팅
     task-queue-consumer.ts             # SQS → Task Controller 디스패치 (폴링)

@@ -323,20 +323,34 @@
 [ ] Controller 클래스에 private readonly logger = new Logger(XxxController.name)가 있는가?
 [ ] Domain 레이어에서 Logger를 사용하고 있지 않은가?
     → Domain 레이어는 프레임워크 무의존. 로깅은 Application 레이어에서 수행
+[ ] AppModule imports에 ScheduleModule.forRoot()와 TaskQueueModule이 포함되어 있는가?
+    → 누락 시 @Cron이 조용히 동작 안 함
 [ ] Cron 작업(@Cron, @Interval)이 Infrastructure 레이어에 배치되어 있는가?
     → Application/Domain 레이어에 스케줄링 데코레이터 사용 금지
 [ ] Scheduler(@Cron 핸들러)가 비즈니스 로직을 직접 실행하지 않고 TaskQueue.enqueue만 호출하는가?
-    → 다중 인스턴스 중복 실행·재시도·백프레셔를 SQS에 위임
-[ ] Task Controller가 Interface 레이어(src/<domain>/interface/)에 배치되고 CommandService를 주입받아 Command만 실행하는가?
+[ ] TaskQueue.enqueue가 task_outbox에 row를 쓰고 TaskOutboxRelay가 SQS에 발행하는 Outbox 경로를 따르는가?
+    → Command 트랜잭션과 Task 적재의 원자성 확보 (dual-write 차단)
+[ ] Ad-hoc Task 적재가 Command의 트랜잭션(transactionManager.run) 안에서 호출되는가?
+[ ] Task Controller가 Interface 레이어(src/<domain>/interface/)에 배치되고 CommandService(+ 필요 시 TaskExecutionLog)를 주입받아 Command만 실행하는가?
     → HTTP Controller와 동일한 입력 어댑터. 조건 분기·비즈니스 로직 금지
+[ ] Task Controller가 DataSource / Repository<Entity> 등을 직접 주입받고 있지는 않은가?
+    → 필요 시 task-queue 모듈의 abstract(TaskExecutionLog)를 주입
+[ ] Task Controller가 에러를 그대로 throw하는가?
+    → HTTP Controller의 .catch + generateErrorResponse 패턴 금지. 예외는 TaskQueueConsumer가 catch하여 재시도/DLQ에 위임
 [ ] Task Controller의 메서드에 @TaskConsumer('taskType')가 부여되어 있는가?
 [ ] taskType 문자열이 전역 유일한가? (@TaskConsumer 중복 등록은 부트스트랩 시점에 실패)
+[ ] 모든 도메인이 단일 Task 큐를 공유하는가? (도메인별 큐 분리 금지)
 [ ] FIFO 큐 + MessageDeduplicationId(날짜/엔티티 기반)로 동일 Cron 타이밍의 중복 적재를 방지하는가?
 [ ] TaskQueueConsumer가 실패 시 메시지를 삭제하지 않아 visibility timeout 후 자동 재수신되도록 두는가?
     → try-catch로 예외를 삼키고 DeleteMessage를 호출하면 실패가 소실됨
-[ ] 모든 Task 큐에 DLQ와 maxReceiveCount(RedrivePolicy)가 설정되어 있는가?
+[ ] Task 큐와 DLQ가 모두 구성되어 있고 maxReceiveCount(RedrivePolicy)가 설정되어 있는가?
 [ ] @TaskConsumer 메서드가 호출하는 Command가 멱등하게 구현되어 at-least-once 전달에도 결과가 동일한가?
-[ ] TaskQueueConsumer가 OnApplicationShutdown으로 polling 루프를 중단(running = false)하는가?
+    → 엔티티 단위 멱등성 필요 시 TaskExecutionLog.recordOnce()로 ledger 보호
+[ ] 긴 Task(처리 시간 예측 불가)는 @TaskConsumer의 heartbeat 옵션을 사용하는가?
+    → 초기 VisibilityTimeout은 짧게, 필요한 taskType만 하트비트로 연장
+[ ] TaskQueueConsumer가 OnApplicationShutdown으로 pollPromise를 await하여 in-flight Task 완료를 대기하는가?
+[ ] task_outbox / task_execution_log 테이블에 cleanup Cron이 설정되어 있는가?
+    → 방치 시 무한 증가
 [ ] Task Controller가 도메인 모듈의 providers에 등록되어 ModuleRef로 해결 가능한가?
     → NestJS의 controllers 배열은 라우트 매핑용. Task Controller는 providers에 등록
 ```

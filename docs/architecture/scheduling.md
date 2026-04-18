@@ -105,12 +105,18 @@ SQS_TASK_DLQ_URL=https://.../app-task-dlq.fifo
 
 ```
 src/
+  common/
+    is-unique-violation.ts                   # Postgres unique 위반 판별 헬퍼
   task-queue/                                # 공유 Task Queue 인프라
     task-queue-module.ts                     # @Global 모듈
     task-queue.ts                            # TaskQueue 인터페이스 (abstract class)
     task-queue-outbox.ts                     # Outbox 기반 TaskQueue 구현체
     task-outbox.entity.ts                    # task_outbox 테이블 Entity
     task-outbox-relay.ts                     # task_outbox → SQS 발행 (Cron 폴링)
+    task-execution-log.ts                    # TaskExecutionLog 인터페이스 (abstract)
+    task-execution-log-db.ts                 # DB 기반 구현체
+    task-execution-log.entity.ts             # task_execution_log 테이블 Entity
+    task-execution-log-cleaner.ts            # ledger cleanup (Cron)
     task-consumer.decorator.ts               # @TaskConsumer 데코레이터
     task-consumer-registry.ts                # taskType → 핸들러 라우팅
     task-queue-consumer.ts                   # SQS 폴링 → registry.dispatch
@@ -514,6 +520,31 @@ export class TaskOutboxRelay {
 - **다중 인스턴스 중복 적재**: Cron이 여러 인스턴스에서 동시에 발화해도 `deduplicationId`가 동일하면 SQS FIFO 5분 dedup 윈도우가 1건만 실제 큐에 들어가게 한다. `task_outbox`에는 여러 row가 생길 수 있으나, Relay가 각각 전송해도 SQS 레벨에서 걸러진다.
 - **발행 실패는 다음 폴링에서 재시도**: `processed` 플래그가 flip되지 않았으므로 자연스럽게 재처리된다.
 
+### Relay 다중 인스턴스 race — 한계와 완화
+
+위 구현은 여러 앱 인스턴스가 Relay를 동시 실행할 때 **같은 row를 중복 가져가 각자 SQS에 보낸다**. 보통은 SQS FIFO의 5분 dedup 윈도우가 막아주지만, 다음 상황에서 윈도우를 초과해 중복 배달될 수 있다.
+
+- Relay가 장애로 5분 이상 멈췄다가 복귀 (쌓인 row들을 일괄 전송 → 타이밍상 5분 윈도우 밖의 중복)
+- 다른 instance에서 같은 `deduplicationId`로 오래 전 outbox row가 남아있다 늦게 발송
+
+완화 전략 — 상황에 맞게 선택:
+
+| 방법 | 설명 | 트레이드오프 |
+|------|------|--------------|
+| **Consumer 측 멱등성** (기본) | 최후 방어선. 상단 [멱등성](#멱등성) 섹션의 ledger 패턴을 모든 중요 Task에 적용 | 항상 필요 |
+| **`SELECT ... FOR UPDATE SKIP LOCKED`** | Relay가 row를 원자적으로 claim — 동시 실행 시 한 인스턴스만 특정 row를 처리 | 코드 복잡도 소폭 증가 |
+| **Leader election** | 단일 인스턴스에서만 Relay 실행 (예: Redis 분산 락) | SPOF 위험, 추가 인프라 |
+
+**Consumer 멱등성은 협상 불가.** Relay에 lock을 걸어도 at-least-once 보장은 SQS의 본질이므로 Consumer는 항상 멱등해야 한다.
+
+### `deduplicationId` UNIQUE 제약 — 선택지
+
+`task_outbox.deduplicationId`에 DB UNIQUE 제약을 걸면 **다중 인스턴스의 outbox write가 write-time에 1건만 성공**한다(나머지는 unique violation → 무시). `task_outbox` row 폭증을 DB 레벨에서 차단.
+
+**단점**: 한번 쓴 `deduplicationId`를 **영구히 재사용 불가**. 예를 들어 `order.archive-<orderId>` 같은 엔티티 기반 dedupId를 나중에 의도적으로 재실행해야 한다면 막힌다. 날짜 단위(`cleanup-2026-04-18`) 같은 시간 기반은 자연 유일하므로 안전.
+
+→ **기본은 UNIQUE 제약 없이 운영**하고(SQS dedup에 위임), 특정 taskType만 날짜 기반 dedupId를 쓰는 것이 확실하다면 부분 UNIQUE 인덱스(`WHERE task_type = 'xxx'`)로 좁게 적용한다.
+
 DI 바인딩은 [모듈 등록](#모듈-등록) 섹션에서 `{ provide: TaskQueue, useClass: TaskQueueOutbox }`로 수행한다.
 
 ## 6단계: Scheduler — Cron → TaskQueue
@@ -558,6 +589,10 @@ import { Global, Module } from '@nestjs/common'
 import { TypeOrmModule } from '@nestjs/typeorm'
 
 import { TaskConsumerRegistry } from './task-consumer-registry'
+import { TaskExecutionLog } from './task-execution-log'
+import { TaskExecutionLogDb } from './task-execution-log-db'
+import { TaskExecutionLogCleaner } from './task-execution-log-cleaner'
+import { TaskExecutionLogEntity } from './task-execution-log.entity'
 import { TaskOutboxEntity } from './task-outbox.entity'
 import { TaskOutboxRelay } from './task-outbox-relay'
 import { TaskQueue } from './task-queue'
@@ -566,14 +601,16 @@ import { TaskQueueOutbox } from './task-queue-outbox'
 
 @Global()
 @Module({
-  imports: [TypeOrmModule.forFeature([TaskOutboxEntity])],
+  imports: [TypeOrmModule.forFeature([TaskOutboxEntity, TaskExecutionLogEntity])],
   providers: [
     TaskConsumerRegistry,
     TaskQueueConsumer,
     TaskOutboxRelay,
-    { provide: TaskQueue, useClass: TaskQueueOutbox }
+    TaskExecutionLogCleaner,
+    { provide: TaskQueue, useClass: TaskQueueOutbox },
+    { provide: TaskExecutionLog, useClass: TaskExecutionLogDb }
   ],
-  exports: [TaskQueue]
+  exports: [TaskQueue, TaskExecutionLog]
 })
 export class TaskQueueModule {}
 ```
@@ -686,14 +723,21 @@ public async cleanupExpiredOrders(): Promise<number> {
 }
 ```
 
-엔티티 단위 멱등성이 필요하면 **처리 이력 ledger 테이블**로 중복 실행을 방어한다. payload에 고유 `taskId`를 포함시키고 (예: `order-archive-<orderId>-<yyyymmdd>`), 처리 시 ledger에 insert를 시도하여 unique 위반 시 이미 처리된 것으로 간주한다.
+엔티티 단위 멱등성이 필요하면 **처리 이력 ledger 테이블**로 중복 실행을 방어한다. payload에 고유 `taskId`를 포함시키고(예: `order-archive-<orderId>-<yyyymmdd>`), 처리 시 ledger에 insert를 시도하여 unique 위반 시 이미 처리된 것으로 간주한다.
+
+Task Controller(Interface 레이어)가 DataSource를 직접 주입하면 레이어 컨벤션을 깨므로, task-queue 모듈이 **`TaskExecutionLog` abstract class**를 제공하고 Task Controller는 이 인터페이스만 주입받는다.
+
+### Entity / 헬퍼
 
 ```typescript
 // src/task-queue/task-execution-log.entity.ts
+import { Column, Entity, Index, PrimaryColumn } from 'typeorm'
+
 @Entity('task_execution_log')
+@Index(['executedAt'])
 export class TaskExecutionLogEntity {
   @PrimaryColumn()
-  taskId: string          // payload에서 받아온 고유 ID
+  taskId: string
 
   @Column()
   taskType: string
@@ -704,28 +748,118 @@ export class TaskExecutionLogEntity {
 ```
 
 ```typescript
-// Task Controller — 멱등성 보호가 필요한 Task에 한해 적용
-@TaskConsumer('order.archive')
-public async archive(payload: { taskId: string; orderId: string }): Promise<void> {
-  try {
-    await this.dataSource.getRepository(TaskExecutionLogEntity).insert({
-      taskId: payload.taskId,
-      taskType: 'order.archive',
-      executedAt: new Date()
-    })
-  } catch (error) {
-    if (isUniqueViolation(error)) {
-      this.logger.log({ message: '중복 수신 — 이미 처리됨', task_id: payload.taskId })
-      return   // 예외로 던지지 않음: SQS에서 정상 삭제되어야 함
-    }
-    throw error
-  }
-  await this.orderCommandService.archiveOrder(payload.orderId)
+// src/common/is-unique-violation.ts
+import { QueryFailedError } from 'typeorm'
+
+// Postgres unique_violation = SQLSTATE 23505
+export function isUniqueViolation(error: unknown): boolean {
+  return (
+    error instanceof QueryFailedError
+    && (error.driverError as { code?: string } | undefined)?.code === '23505'
+  )
 }
 ```
 
-- **unique 위반은 정상 경로**: 이미 처리된 Task가 재전달된 것. 메서드를 정상 반환해 `TaskQueueConsumer`가 메시지를 삭제하도록 한다. 예외를 던지면 재시도되어 루프에 빠진다.
-- **ledger insert는 비즈니스 로직 이전**: 이후 비즈니스 로직에서 실패해도 ledger는 남아있다면 재처리가 차단된다 — 대부분의 "정확히 한 번" 의미론이 맞는다. 비즈니스 로직과 ledger를 완전히 원자적으로 묶고 싶다면 동일 트랜잭션에 포함시킨다.
+### `TaskExecutionLog` 인터페이스 + 구현체
+
+```typescript
+// src/task-queue/task-execution-log.ts
+export type RecordResult = 'recorded' | 'already-executed'
+
+export abstract class TaskExecutionLog {
+  abstract recordOnce(taskId: string, taskType: string): Promise<RecordResult>
+}
+```
+
+```typescript
+// src/task-queue/task-execution-log-db.ts
+import { Injectable } from '@nestjs/common'
+
+import { isUniqueViolation } from '@/common/is-unique-violation'
+import { TransactionManager } from '@/database/transaction-manager'
+
+import { RecordResult, TaskExecutionLog } from './task-execution-log'
+import { TaskExecutionLogEntity } from './task-execution-log.entity'
+
+@Injectable()
+export class TaskExecutionLogDb extends TaskExecutionLog {
+  constructor(private readonly transactionManager: TransactionManager) {
+    super()
+  }
+
+  public async recordOnce(taskId: string, taskType: string): Promise<RecordResult> {
+    const manager = this.transactionManager.getManager()
+    try {
+      await manager.insert(TaskExecutionLogEntity, {
+        taskId,
+        taskType,
+        executedAt: new Date()
+      })
+      return 'recorded'
+    } catch (error) {
+      if (isUniqueViolation(error)) return 'already-executed'
+      throw error
+    }
+  }
+}
+```
+
+### Task Controller 적용
+
+```typescript
+@Injectable()
+export class OrderTaskController {
+  private readonly logger = new Logger(OrderTaskController.name)
+
+  constructor(
+    private readonly orderCommandService: OrderCommandService,
+    private readonly executionLog: TaskExecutionLog    // abstract class
+  ) {}
+
+  @TaskConsumer('order.archive')
+  public async archive(payload: { taskId: string; orderId: string }): Promise<void> {
+    const result = await this.executionLog.recordOnce(payload.taskId, 'order.archive')
+    if (result === 'already-executed') {
+      this.logger.log({ message: '중복 수신 — 이미 처리됨', task_id: payload.taskId })
+      return   // 예외를 던지지 않음: SQS에서 정상 삭제되어야 함
+    }
+    await this.orderCommandService.archiveOrder(payload.orderId)
+  }
+}
+```
+
+- **`already-executed`는 정상 경로**: 이미 처리된 Task의 재전달. 메서드를 정상 반환해 `TaskQueueConsumer`가 메시지를 삭제하도록 한다. 예외를 던지면 재시도되어 루프에 빠진다.
+- **ledger 기록은 비즈니스 로직 이전**: 이후 로직이 실패해도 ledger가 남아있다면 재처리가 차단되어 "정확히 한 번" 의미론에 가까워진다. 비즈니스 로직과 ledger를 완전히 원자적으로 묶고 싶다면 동일 트랜잭션으로 감싼다(`TaskExecutionLogDb`가 `TransactionManager`에 참여하므로 자동).
+- **DataSource 직접 주입 금지**: Task Controller는 Interface 레이어이므로 `DataSource`/`Repository<Entity>` 직접 주입 금지. `TaskExecutionLog` abstract만 주입받아 관심사를 격리.
+
+### Ledger cleanup
+
+`task_execution_log`는 방치하면 무한 증가한다. 보존 기간은 **`maxReceiveCount × VisibilityTimeout`에 여유를 더한 값** 이상이면 충분하다(같은 메시지가 재배달될 수 있는 최대 기간). 보통 30일 보존으로 넉넉하다.
+
+```typescript
+// src/task-queue/task-execution-log-cleaner.ts
+import { Injectable, Logger } from '@nestjs/common'
+import { Cron } from '@nestjs/schedule'
+import { DataSource, LessThan } from 'typeorm'
+
+import { TaskExecutionLogEntity } from './task-execution-log.entity'
+
+@Injectable()
+export class TaskExecutionLogCleaner {
+  private readonly logger = new Logger(TaskExecutionLogCleaner.name)
+
+  constructor(private readonly dataSource: DataSource) {}
+
+  @Cron('0 4 * * *')  // 매일 04:00
+  public async cleanup(): Promise<void> {
+    const threshold = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+    const result = await this.dataSource
+      .getRepository(TaskExecutionLogEntity)
+      .delete({ executedAt: LessThan(threshold) })
+    this.logger.log({ message: 'ledger cleanup', deleted: result.affected ?? 0 })
+  }
+}
+```
 
 ## 긴 Task와 VisibilityTimeout 하트비트
 
@@ -750,18 +884,92 @@ public async generateLargeReport(payload: { reportId: string }): Promise<void> {
 
 앱 종료 시 `TaskQueueConsumer`의 polling 루프가 먼저 중단되어야 한다. 위 구현의 `OnApplicationShutdown`이 이를 담당한다. 진행 중인 Task는 완료까지 대기하고, 실패하면 visibility timeout 후 다른 인스턴스가 재수신한다. 자세한 순서는 [graceful-shutdown.md](./graceful-shutdown.md)를 참고한다.
 
+**단, `pollPromise` await는 무한 대기가 아니다.** 컨테이너 오케스트레이터(K8s 등)는 `terminationGracePeriodSeconds`(기본 30초) 내에 정리가 끝나지 않으면 SIGKILL로 강제 종료한다. Task Controller가 stuck(무한 루프·DB deadlock 등)되면 shutdown이 블록되고 강제 종료가 발생하며, in-flight 메시지는 삭제되지 않았으므로 visibility timeout 후 다른 인스턴스가 재수신한다 — 즉, **at-least-once 의미론이 강제 종료를 복구**한다. 그래도 다음을 유념한다.
+
+- **Task의 최대 처리 시간이 grace period보다 작도록 설계**. 길어지면 `@TaskConsumer heartbeat` + grace period 상향이 함께 필요.
+- **정상 종료 경로에서 재수신으로 인한 중복 실행 가능** — Consumer 측 멱등성이 여기서도 방어선.
+
 ## DLQ 모니터링
 
 DLQ에 쌓인 메시지는 **코드 버그나 독성 페이로드의 증거**다. CloudWatch 알람으로 `ApproximateNumberOfMessages > 0`을 감시하고, 원인 수정 후 DLQ → 원래 큐로 redrive한다.
 
 ## Testing
 
-- **Task Controller**: `@TaskConsumer`는 전역 Map에 메타데이터만 등록할 뿐 메서드 호출 자체를 래핑하지 않는다. 단위 테스트에서는 **Task Controller를 직접 인스턴스화하고 메서드를 호출**하면 된다. SQS/큐 목 불필요.
-- **Scheduler**: `TaskQueue` abstract를 목으로 주입하고 `@Cron` 메서드를 직접 호출하여 `enqueue`가 기대한 인자로 불렸는지 검증한다.
-- **`TaskQueueOutbox`**: 통합 테스트에서 실제 DB에 `task_outbox` row가 기록되는지 확인. 트랜잭션 롤백 시 row도 사라지는지 함께 검증.
-- **`TaskOutboxRelay` / `TaskQueueConsumer`**: SQS 클라이언트를 목으로 치환하거나 LocalStack과의 통합 테스트로 커버.
+`@TaskConsumer` / `@Cron` 데코레이터는 모두 **메타데이터만 등록**하고 메서드 호출 자체를 래핑하지 않는다. 따라서 단위 테스트는 데코레이터를 우회해 메서드를 직접 호출하면 된다. SQS 목이 필요한 곳은 통합 경계뿐.
 
-상세 패턴은 [testing.md](./testing.md)를 참조한다.
+### Task Controller — 단위 테스트
+
+CommandService와 TaskExecutionLog를 목으로 주입하고 메서드를 직접 호출한다. 큐/SQS 불필요.
+
+```typescript
+describe('OrderTaskController', () => {
+  const orderCommandService = { archiveOrder: jest.fn() } as any
+  const executionLog = { recordOnce: jest.fn() } as any
+  const controller = new OrderTaskController(orderCommandService, executionLog)
+
+  test('이미 처리된 Task는 Command를 호출하지 않는다', async () => {
+    executionLog.recordOnce.mockResolvedValue('already-executed')
+    await controller.archive({ taskId: 't1', orderId: 'o1' })
+    expect(orderCommandService.archiveOrder).not.toHaveBeenCalled()
+  })
+
+  test('신규 Task는 Command를 실행한다', async () => {
+    executionLog.recordOnce.mockResolvedValue('recorded')
+    await controller.archive({ taskId: 't1', orderId: 'o1' })
+    expect(orderCommandService.archiveOrder).toHaveBeenCalledWith('o1')
+  })
+})
+```
+
+### Scheduler — 단위 테스트
+
+`TaskQueue` 목을 주입하고 `@Cron` 메서드를 직접 호출한 뒤 `enqueue` 인자를 검증한다.
+
+```typescript
+test('만료 주문 정리 Task를 날짜 기반 dedupId로 적재한다', async () => {
+  const taskQueue = { enqueue: jest.fn() } as any
+  const scheduler = new OrderCleanupScheduler(taskQueue)
+
+  await scheduler.enqueueDailyCleanup()
+
+  expect(taskQueue.enqueue).toHaveBeenCalledWith(
+    'order.cleanup-expired',
+    {},
+    expect.objectContaining({ groupId: 'order.cleanup', deduplicationId: expect.stringMatching(/^order\.cleanup-expired-\d{4}-\d{2}-\d{2}$/) })
+  )
+})
+```
+
+### `TaskQueueOutbox` — 통합 테스트
+
+실제 DB로 `task_outbox` row insert와 트랜잭션 롤백 동작을 검증한다.
+
+```typescript
+test('enqueue는 task_outbox row를 insert한다', async () => {
+  await taskQueueOutbox.enqueue('order.archive', { orderId: 'o1' }, { groupId: 'o1', deduplicationId: 'd1' })
+  const rows = await dataSource.getRepository(TaskOutboxEntity).find()
+  expect(rows).toHaveLength(1)
+  expect(rows[0]).toMatchObject({ taskType: 'order.archive', processed: false })
+})
+
+test('트랜잭션 롤백 시 row도 롤백된다', async () => {
+  await expect(
+    transactionManager.run(async () => {
+      await taskQueueOutbox.enqueue('order.archive', { orderId: 'o1' }, { groupId: 'o1', deduplicationId: 'd2' })
+      throw new Error('rollback')
+    })
+  ).rejects.toThrow()
+  const rows = await dataSource.getRepository(TaskOutboxEntity).findBy({ deduplicationId: 'd2' })
+  expect(rows).toHaveLength(0)
+})
+```
+
+### `TaskOutboxRelay` / `TaskQueueConsumer` — 통합 테스트
+
+- **Relay**: SQSClient를 목 치환하거나 LocalStack으로 실제 전송. `processed=true`로 flip되는지 확인.
+- **Consumer**: LocalStack 큐에 메시지를 직접 `SendMessage`한 뒤 Task Controller의 `@TaskConsumer` 메서드가 호출되는지 검증.
+
+공통 패턴(TestContainer, trxn rollback 등)은 [testing.md](./testing.md)를 참조한다.
 
 ## Interval / Timeout
 
@@ -786,5 +994,8 @@ async warmupCache() { /* ... */ }
 - **FIFO + MessageDeduplicationId**: 다중 인스턴스 Cron 중복 적재는 큐 레벨에서 방지한다.
 - **실패 시 메시지 삭제 금지**: visibility timeout → 재수신 → DLQ 구조를 신뢰한다. try-catch로 삼키고 Delete하면 실패가 소실된다.
 - **긴 Task는 `@TaskConsumer` heartbeat 옵션**: 초기 `VisibilityTimeout`을 짧게 잡고, 필요한 taskType에만 `heartbeat`을 지정해 처리 중 연장한다.
-- **Command는 멱등하게**: at-least-once 전달이므로 동일 Task가 2회 이상 실행되어도 결과가 같아야 한다. 필요 시 `task_execution_log` ledger로 방어.
+- **Command는 멱등하게**: at-least-once 전달이므로 동일 Task가 2회 이상 실행되어도 결과가 같아야 한다. 엔티티 단위 멱등성이 필요하면 `TaskExecutionLog.recordOnce()` ledger 패턴으로 방어.
+- **Task Controller는 DB 직접 접근 금지**: `DataSource`/`Repository<Entity>`를 주입하지 않는다. 공용 관심사는 task-queue 모듈의 abstract(`TaskExecutionLog` 등)를 주입.
+- **ledger와 outbox 모두 cleanup Cron 필수**: `task_outbox` / `task_execution_log` 방치 시 무한 증가.
+- **Consumer 멱등성은 최후 방어선**: Relay 다중 인스턴스 race·Graceful Shutdown 강제 종료·visibility timeout 만료 시 재수신 등 어떤 경우에도 Consumer가 멱등하면 복구된다.
 - **DLQ 필수**: 모든 Task 큐에 DLQ를 설정하고 CloudWatch 알람으로 감시한다.
