@@ -10,6 +10,7 @@
 - 모듈: `<domain>-module.ts` (NOT `<domain>.module.ts`)
 - 컨트롤러: `<domain>-controller.ts`
 - 에러 메시지: `<domain>-error-message.ts`
+- 에러 코드: `<domain>-error-code.ts` (모듈 루트에 위치, 메시지와 1:1 매핑)
 - enum: `<domain>-enum.ts` (모듈 루트 디렉토리에 위치)
 - 상수: `<domain>-constant.ts` (모듈 루트 디렉토리에 위치)
 - Aggregate Root: `<aggregate-root>.ts` (domain 레이어)
@@ -52,7 +53,8 @@
 - Adapter 구현체: `UserAdapterImpl`, `PaymentAdapterImpl`
 - DTO: `GetOrderRequestParam`, `GetOrdersResponseBody`, `FindUsersRequestQuerystring`
 - 커맨드: `CancelOrderCommand`, `CreateUserCommand`
-- 에러 enum: `OrderErrorMessage`, `UserErrorMessage`
+- 에러 메시지 enum: `OrderErrorMessage`, `UserErrorMessage`
+- 에러 코드 enum: `OrderErrorCode`, `UserErrorCode` (값은 `SCREAMING_SNAKE_CASE` 고정 문자열)
 - 쿼리 결과: `GetOrdersResult`, `FindUsersResult`
 - CommandHandler (`@nestjs/cqrs`): `CancelOrderCommandHandler`, `CreateOrderCommandHandler`
 - QueryHandler (`@nestjs/cqrs`): `GetOrdersQueryHandler`, `GetOrderQueryHandler`

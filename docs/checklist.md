@@ -253,6 +253,14 @@
 [ ] Controller의 .catch() 블록이 this.logger.error(error) + throw generateErrorResponse(...) 형태인가?
 [ ] generateErrorResponse 두 번째 인자의 에러 메시지가 ErrorMessage enum 값을 참조하는가?
     (free-form 문자열 직접 사용 금지)
+[ ] generateErrorResponse 매핑 튜플이 [ErrorMessage, ExceptionClass, ErrorCode] 3-튜플 형식인가?
+    → 두 번째 인자에 각 에러 상황마다 고유한 ErrorCode enum 값이 포함되어야 한다
+[ ] 에러 코드 enum 파일이 <domain>-error-code.ts 형식으로 모듈 루트에 존재하는가?
+[ ] 에러 코드 enum 클래스명이 <Domain>ErrorCode 형식이고 모든 키/값이 SCREAMING_SNAKE_CASE인가?
+[ ] <Domain>ErrorMessage의 모든 항목에 대응되는 <Domain>ErrorCode 항목이 1:1로 존재하는가?
+    → 메시지만 있고 코드가 없거나 반대 상황이 발생하지 않도록 한다
+[ ] 에러 응답 body가 { statusCode, code, message, error } 4개 필드 형식을 따르는가?
+    → generateErrorResponse가 해당 형식으로 HttpException을 생성해야 한다
 [ ] Service에서 throw하는 에러 메시지가 모두 <Domain>ErrorMessage enum에 정의되어 있는가?
     → 없다면 enum에 추가 후 참조
 [ ] Aggregate에서 throw하는 에러 메시지도 <Domain>ErrorMessage enum에 정의되어 있는가?
