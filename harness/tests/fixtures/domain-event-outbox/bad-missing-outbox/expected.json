@@ -1,0 +1,9 @@
+{
+  "name": "domain-event-outbox",
+  "applicable": true,
+  "expectedFailureRuleIds": [
+    "domain-event-outbox.module-missing",
+    "domain-event-outbox.repository-does-not-persist-events",
+    "domain-event-outbox.clear-events-missing"
+  ]
+}

@@ -1,0 +1,5 @@
+{
+  "name": "domain-event-outbox",
+  "applicable": true,
+  "expectedFailureRuleIds": []
+}
