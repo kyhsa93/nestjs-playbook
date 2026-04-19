@@ -30,6 +30,7 @@ import { evaluateImportGraph } from '../rules/import-graph.evaluator'
 import { evaluateDomainEventOutbox } from '../rules/domain-event-outbox.evaluator'
 import { evaluateBuild } from '../rules/build.evaluator'
 import { evaluateTestRun } from '../rules/test-run.evaluator'
+import { evaluateSecretManager } from '../rules/secret-manager.evaluator'
 import { aggregate } from '../shared/score'
 import type { EvaluatorResult } from '../shared/types'
 
@@ -50,7 +51,8 @@ const EVALUATORS: Record<string, (root: string) => EvaluatorResult> = {
   'import-graph': evaluateImportGraph,
   'domain-event-outbox': evaluateDomainEventOutbox,
   build: evaluateBuild,
-  'test-run': evaluateTestRun
+  'test-run': evaluateTestRun,
+  'secret-manager': evaluateSecretManager
 }
 
 interface Args {

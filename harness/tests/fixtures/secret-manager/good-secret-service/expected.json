@@ -1,0 +1,5 @@
+{
+  "name": "secret-manager",
+  "applicable": true,
+  "expectedFailureRuleIds": []
+}

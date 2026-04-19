@@ -429,6 +429,13 @@
     → 운영 환경에서 synchronize: true 사용 금지
 [ ] 이벤트 핸들러가 멱등하게 구현되어 있는가?
     → 이미 처리된 상태인지 확인 후 처리, 또는 DB unique 제약으로 중복 방지
+[ ] DB 비밀번호·JWT 시크릿·외부 API 키 등 민감 값을 운영 환경에서 AWS Secrets Manager에서 조회하는가?
+    → 환경 변수로 직접 주입 금지. config 팩토리에서 NODE_ENV 분기로 로컬은 env, 운영은 SecretsManagerClient 또는 SecretService 사용
+[ ] SecretService 인터페이스가 application/service/에 abstract class로 정의되고 구현체가 infrastructure/에 위치하는가?
+    → 기술 인프라 Service 패턴. TTL 메모리 캐시를 두어 반복 조회를 피한다
+[ ] 민감 키(*_PASSWORD, *_SECRET, *_API_KEY, *_TOKEN)를 참조하는 config 팩토리가 NODE_ENV 분기 또는 SecretService 주입 없이 process.env만으로 값을 반환하지 않는가?
+    → 한 경로라도 env만 사용되면 운영 환경에서 시크릿이 평문으로 노출될 위험
+[ ] 시크릿 값 또는 8자 이상의 비밀번호/토큰 리터럴이 소스 코드·커밋 히스토리에 하드코딩되어 있지 않은가?
 ```
 
 ---

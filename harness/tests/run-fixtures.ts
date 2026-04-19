@@ -19,6 +19,7 @@ import { evaluateScheduler } from '../evaluators/rules/scheduler.evaluator'
 import { evaluateDeprecatedApi } from '../evaluators/rules/deprecated-api.evaluator'
 import { evaluateDomainEventOutbox } from '../evaluators/rules/domain-event-outbox.evaluator'
 import { evaluateErrorHandling } from '../evaluators/rules/error-handling.evaluator'
+import { evaluateSecretManager } from '../evaluators/rules/secret-manager.evaluator'
 import type { EvaluatorResult } from '../evaluators/shared/types'
 
 type EvaluatorFn = (root: string) => EvaluatorResult
@@ -28,7 +29,8 @@ const EVALUATORS: Record<string, EvaluatorFn> = {
   scheduler: evaluateScheduler,
   'deprecated-api': evaluateDeprecatedApi,
   'domain-event-outbox': evaluateDomainEventOutbox,
-  'error-handling': evaluateErrorHandling
+  'error-handling': evaluateErrorHandling,
+  'secret-manager': evaluateSecretManager
 }
 
 interface Expected {

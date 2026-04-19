@@ -1,0 +1,8 @@
+{
+  "name": "secret-manager",
+  "applicable": true,
+  "expectedFailureRuleIds": [
+    "secret-manager.config.sensitive-env-without-guard",
+    "secret-manager.config.sensitive-env-without-guard"
+  ]
+}

@@ -81,6 +81,7 @@ npm run evaluate -- /path/to/project --out=report.json
 | `domain-event-outbox` | Aggregate 이벤트 발행 시 Outbox 모듈/Repository saveAll/clearEvents 준수, Application(단 `application/event/` 예외)에서 이벤트 직접 생성·OutboxWriter 참조 금지, `@HandleEvent`는 `application/event/<event>-handler.ts`, `@HandleIntegrationEvent`는 `interface/integration-event/<domain>-integration-event-controller.ts`, `EventBus.publish()` 직접 호출 금지 | 15 *(auto-gated)* |
 | `build` | `tsc --noEmit` 실행 (tsconfig 존재 시) | 25 *(auto-gated)* |
 | `test-run` | `npm test` 실행 (`HARNESS_ENABLE_TEST_RUN=1`) | 20 *(opt-in)* |
+| `secret-manager` | `src/config/*.config.ts`에서 민감 키(`*_PASSWORD` · `*_SECRET` · `*_API_KEY` · `*_TOKEN`)를 `process.env`로만 받으면 실패. `NODE_ENV` 분기 · `SecretsManagerClient` · `SecretService` 중 하나 필요 | 10 *(auto-gated)* |
 
 *auto-gated*: 해당 기능을 사용하는 코드가 없으면 `maxScore=0`으로 집계에서 제외.
 *opt-in*: 환경 변수 명시 시에만 실행.
