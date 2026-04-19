@@ -139,9 +139,17 @@
 [ ] Repository 구현체의 save 메서드에서 domainEvents가 있으면 outboxWriter.saveAll()로 outbox에 함께 저장하는가?
     → Command Service가 outbox를 직접 다루지 않는다. Repository가 Aggregate + outbox를 같은 트랜잭션으로 저장
 [ ] Repository 구현체의 save 메서드에서 outbox 저장 후 aggregate.clearEvents()를 호출하는가?
-[ ] EventHandler가 @HandleEvent 데코레이터로 eventType을 지정하고 application/event/에 배치되어 있는가?
+[ ] Domain EventHandler가 @HandleEvent 데코레이터로 eventType을 지정하고 application/event/에 배치되어 있는가?
 [ ] EventHandler가 도메인 Module providers에 등록되어 있는가?
     → OutboxWriter, OutboxRelay, EventConsumer 등은 @Global() OutboxModule에서 제공
+[ ] 외부 BC로 알릴 필요가 있는 사건은 Integration Event로 변환해 발행하는가?
+    → Domain Event 객체를 그대로 외부로 전달하지 않는다. Application EventHandler가 IntegrationEventV<N>을 구성해 OutboxWriter로 적재
+[ ] Integration Event 클래스가 application/integration-event/<name>-integration-event.ts에 정의되어 있고 버전 접미사(V1 등) 및 eventName 리터럴(`<domain>.<verb-past>.v<N>`)을 포함하는가?
+[ ] OutboxWriter를 Application 레이어에서 참조하는 경우 application/event/ EventHandler로 한정되어 있는가?
+    → application/command/ 등 다른 Application 서브디렉토리에서는 참조 금지. Repository 구현체 또는 EventHandler만 outbox 접근
+[ ] 외부 BC가 발행한 Integration Event 수신은 interface/integration-event/<domain>-integration-event-controller.ts에 구현되어 있는가?
+    → @HandleIntegrationEvent('<event-name>.v<N>') 메서드로 받고 Command Service만 호출. 비즈니스 로직·generateErrorResponse 금지 (Task Controller와 동일)
+[ ] Integration Event Controller가 도메인 Module providers에 등록되어 있는가?
 ```
 
 ---

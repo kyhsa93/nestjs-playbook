@@ -1,9 +1,10 @@
 // domain-event-outbox evaluator — Aggregate가 도메인 이벤트를 발행할 때 가이드의
-// Outbox 패턴을 따르는지 검증한다 (guide: docs/architecture/domain-events.md).
+// Outbox 패턴을 따르는지 + Integration Event 경계를 지키는지 검증
+// (guide: docs/architecture/domain-events.md).
 //
 // Applicability gate: 아래 중 하나라도 존재해야 실행 — 없으면 skip(maxScore=0).
 //   - domain/ 레이어의 Aggregate에 `_events.push(new XxxEvent(` 패턴
-//   - 코드베이스 어디든 `@HandleEvent(` 사용
+//   - 코드베이스 어디든 `@HandleEvent(` / `@HandleIntegrationEvent(` 사용
 //   - 코드베이스 어디든 `eventBus.publish(` 호출
 //
 // Rules:
@@ -12,10 +13,11 @@
 // 3. Repository 구현체에 clearEvents() 호출 흔적.
 // 4. Application 레이어가 도메인 이벤트 객체를 직접 `new` 하지 않음
 //    (이벤트는 Aggregate 내부 도메인 메서드에서만 생성).
-// 5. Application 레이어가 OutboxWriter를 직접 참조하지 않음
-//    (outbox는 Repository 구현체에서만 다룸).
+// 5. Application 레이어의 OutboxWriter 참조는 `application/event/` EventHandler에서만 허용
+//    (Command Service 등 다른 application 서브디렉토리에서는 금지).
 // 6. @HandleEvent 보유 파일은 application/event/<domain-event>-handler.ts 위치.
-// 7. EventBus.publish() 직접 호출 금지 — @nestjs/cqrs 사용 중에도 Outbox 경로 준수.
+// 7. @HandleIntegrationEvent 보유 파일은 interface/integration-event/<domain>-integration-event-controller.ts 위치.
+// 8. EventBus.publish() 직접 호출 금지 — @nestjs/cqrs 사용 중에도 Outbox 경로 준수.
 
 import * as fs from 'node:fs'
 import * as path from 'node:path'
@@ -52,9 +54,10 @@ export function evaluateDomainEventOutbox(root: string): EvaluatorResult {
   })
 
   const hasHandleEvent = files.some((f) => /@HandleEvent\s*\(/.test(fs.readFileSync(f, 'utf-8')))
+  const hasHandleIntegrationEvent = files.some((f) => /@HandleIntegrationEvent\s*\(/.test(fs.readFileSync(f, 'utf-8')))
   const hasEventBusPublish = files.some((f) => /\beventBus\s*\.\s*publish\s*\(/.test(fs.readFileSync(f, 'utf-8')))
 
-  if (aggregatesWithEvents.length === 0 && !hasHandleEvent && !hasEventBusPublish) {
+  if (aggregatesWithEvents.length === 0 && !hasHandleEvent && !hasHandleIntegrationEvent && !hasEventBusPublish) {
     return { name: 'domain-event-outbox', score: 0, maxScore: 0, failures: [] }
   }
 
@@ -134,12 +137,14 @@ export function evaluateDomainEventOutbox(root: string): EvaluatorResult {
   }
 
   for (const f of applicationFiles) {
+    const normalized = f.replace(/\\/g, '/')
+    if (normalized.includes('/application/event/')) continue
     const content = fs.readFileSync(f, 'utf-8')
     if (/\bOutboxWriter\b/.test(content)) {
       failures.push({
         ruleId: 'domain-event-outbox.command-service.outbox-writer-injection',
         severity: 'high',
-        message: `Application 레이어가 OutboxWriter를 참조: ${rel(f)} — outbox는 Repository 구현체에서만 사용`,
+        message: `Application 레이어(application/event/ 외)가 OutboxWriter를 참조: ${rel(f)} — outbox는 Repository 구현체 또는 application/event/ EventHandler에서만 사용`,
         docRef: DOC_REF
       })
       score -= 4
@@ -157,6 +162,23 @@ export function evaluateDomainEventOutbox(root: string): EvaluatorResult {
         ruleId: 'domain-event-outbox.handler.layer',
         severity: 'medium',
         message: `@HandleEvent 보유 파일이 application/event/<domain-event>-handler.ts 경로를 따르지 않음: ${rel(f)}`,
+        docRef: DOC_REF
+      })
+      score -= 2
+    }
+  }
+
+  for (const f of files) {
+    const content = fs.readFileSync(f, 'utf-8')
+    if (!/@HandleIntegrationEvent\s*\(/.test(content)) continue
+    const normalized = f.replace(/\\/g, '/')
+    const inDir = normalized.includes('/interface/integration-event/')
+    const correctSuffix = /-integration-event-controller\.ts$/.test(path.basename(f))
+    if (!inDir || !correctSuffix) {
+      failures.push({
+        ruleId: 'domain-event-outbox.integration-event.controller.layer',
+        severity: 'medium',
+        message: `@HandleIntegrationEvent 보유 파일이 interface/integration-event/<domain>-integration-event-controller.ts 경로를 따르지 않음: ${rel(f)}`,
         docRef: DOC_REF
       })
       score -= 2

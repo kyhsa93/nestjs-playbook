@@ -16,7 +16,9 @@
 - Aggregate Root: `<aggregate-root>.ts` (domain 레이어)
 - Entity: `<entity>.ts` (domain 레이어)
 - Value Object: `<value-object>.ts` (domain 레이어)
-- Domain Event: `<domain-event>.ts` (domain 레이어)
+- Domain Event: `<domain-event>.ts` (domain 레이어, 내부용)
+- Integration Event: `<name>-integration-event.ts` (`application/integration-event/`에 배치, 외부 공개 계약, 버전 접미사 포함)
+- Integration Event Controller: `<domain>-integration-event-controller.ts` (`interface/integration-event/`에 배치, 외부 BC Integration Event 수신)
 - Repository 인터페이스: `<aggregate>-repository.ts` (domain 레이어)
 - Repository 구현체: `<aggregate>-repository-impl.ts` (infrastructure 레이어)
 - DTO: 동사 우선, 서술적 — `get-orders-request-querystring.ts`, `create-order-request-body.ts`
@@ -46,7 +48,9 @@
 - 모듈: `OrderModule`, `UserModule`
 - Aggregate Root: `Order`, `User` (도메인 명사)
 - Value Object: `Money`, `Address`, `OrderItem`
-- Domain Event: `OrderPlaced`, `OrderCancelled` (과거형)
+- Domain Event: `OrderPlaced`, `OrderCancelled` (과거형, 내부용)
+- Integration Event: `OrderCancelledIntegrationEventV1` (과거형 + `IntegrationEventV<N>` 접미사, eventName 리터럴은 `order.cancelled.v1` 형식)
+- Integration Event Controller: `OrderIntegrationEventController`, `PaymentIntegrationEventController`
 - Repository 인터페이스: `OrderRepository`, `UserRepository`
 - Repository 구현체: `OrderRepositoryImpl`, `UserRepositoryImpl`
 - Adapter 인터페이스: `UserAdapter`, `PaymentAdapter` (외부 도메인명 + Adapter)

@@ -78,7 +78,7 @@ npm run evaluate -- /path/to/project --out=report.json
 | `deprecated-api` | deprecated/legacy 경로에 `@ApiOperation({ deprecated: true })` | 10 *(auto-gated)* |
 | `module-di-ast` | `@Module`에 providers 배열 존재 | 25 |
 | `import-graph` | domain → infrastructure import 금지 | 25 |
-| `domain-event-outbox` | Aggregate 이벤트 발행 시 Outbox 모듈/Repository saveAll/clearEvents 준수, Application 레이어에서 이벤트 직접 생성·OutboxWriter 참조 금지, `@HandleEvent`는 `application/event/<event>-handler.ts`, `EventBus.publish()` 직접 호출 금지 | 15 *(auto-gated)* |
+| `domain-event-outbox` | Aggregate 이벤트 발행 시 Outbox 모듈/Repository saveAll/clearEvents 준수, Application(단 `application/event/` 예외)에서 이벤트 직접 생성·OutboxWriter 참조 금지, `@HandleEvent`는 `application/event/<event>-handler.ts`, `@HandleIntegrationEvent`는 `interface/integration-event/<domain>-integration-event-controller.ts`, `EventBus.publish()` 직접 호출 금지 | 15 *(auto-gated)* |
 | `build` | `tsc --noEmit` 실행 (tsconfig 존재 시) | 25 *(auto-gated)* |
 | `test-run` | `npm test` 실행 (`HARNESS_ENABLE_TEST_RUN=1`) | 20 *(opt-in)* |
 

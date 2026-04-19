@@ -1,10 +1,23 @@
 # 도메인 이벤트 발행 패턴
 
+### 개념 구분 — Domain Event vs Integration Event
+
+**Domain Event**: 같은 Bounded Context 내부 사건. Aggregate 내부 상태 변화의 결과. 구조가 자유롭게 변하며 외부 BC와 결합되지 않는다.
+- 생성: Aggregate 도메인 메서드 내부에서 `_events.push(new OrderCancelled(...))`
+- 저장: Repository에서 Outbox에 적재
+- 수신: 같은 BC의 `application/event/<domain-event>-handler.ts` (`@HandleEvent`)
+
+**Integration Event**: 외부 BC · 외부 시스템과의 **공개 계약**. 이름·스키마가 안정적이어야 하며 버전을 명시한다(`order.cancelled.v1`). 소비 측이 의존할 수 있는 유일한 접점.
+- 생성: **Application EventHandler**가 Domain Event를 수신한 뒤 필요 시 변환하여 Outbox에 적재 (Aggregate가 직접 만들지 않는다)
+- 수신: 외부 BC가 발행한 Integration Event는 같은 BC 입장에서 **외부 입력**이므로 `interface/integration-event/<domain>-integration-event-controller.ts`에서 수신 (HTTP Controller · Task Controller와 같은 Interface 입력 어댑터)
+
+둘을 구분하지 않으면 BC 간 결합이 커지고 내부 이벤트 리팩토링이 외부 consumer를 깨뜨린다.
+
 ### 전체 흐름
 
 ```
 [1. 도메인 로직 실행]
-  Command Service → Aggregate 도메인 메서드 호출 → Aggregate 내부에 이벤트 객체 수집
+  Command Service → Aggregate 도메인 메서드 호출 → Aggregate 내부에 Domain Event 객체 수집
 
 [2. 저장 — 하나의 트랜잭션]
   Repository.save(aggregate) 내부에서:
@@ -18,10 +31,22 @@
     → 미전송 이벤트를 SQS 큐로 전송
     → 전송 완료된 이벤트를 processed 처리
 
-[4. SQS → EventHandler 수신]
+[4. SQS → EventHandler 수신 (같은 BC의 Domain Event 처리)]
   EventConsumer: SQS 큐에서 메시지를 수신 (폴링)
-    → eventType에 따라 해당 EventHandler 호출
-    → 후속 처리 실행 (알림, 다른 도메인 호출 등)
+    → eventType에 따라 application/event/ 내부 EventHandler 호출
+    → 후속 처리 실행 (같은 BC 내 상태 조정, 로깅 등)
+
+[5. (선택) Integration Event 발행 — Application EventHandler가 변환]
+  EventHandler가 Domain Event를 외부 BC로 알려야 할 때:
+    → IntegrationEventV1 객체를 구성
+    → OutboxWriter로 외부 SQS 큐용 outbox에 적재
+    → 이후 3단계와 동일하게 Relay → SQS → 외부 BC
+
+[6. 외부 BC의 Integration Event 수신 — Interface Integration Event Controller]
+  다른 BC가 발행한 Integration Event가 자기 BC에 들어올 때:
+    → interface/integration-event/<domain>-integration-event-controller.ts
+    → @HandleIntegrationEvent('order.cancelled.v1') 메서드가 수신
+    → Command Service를 호출하여 자기 도메인의 유스케이스 실행
 ```
 
 ### 1단계: Aggregate에서 이벤트 수집
@@ -330,16 +355,21 @@ src/
   outbox/
     outbox-module.ts                 ← OutboxModule (@Global)
     outbox.entity.ts                 ← Outbox 테이블 Entity
-    outbox-writer.ts                 ← 트랜잭션 안에서 이벤트 저장 (Repository에서 호출)
+    outbox-writer.ts                 ← 트랜잭션 안에서 이벤트 저장 (Repository · Application EventHandler에서 호출)
     outbox-relay.ts                  ← Outbox → SQS 전송 (폴링)
-    event-consumer.ts                ← SQS → EventHandler 수신 (폴링)
-    event-handler-registry.ts        ← eventType → Handler 라우팅
+    event-consumer.ts                ← SQS → Handler 라우팅 (폴링)
+    event-handler-registry.ts        ← eventType → Handler 라우팅 (@HandleEvent · @HandleIntegrationEvent)
   <domain>/
     domain/
-      <domain-event>.ts              ← Domain Event 정의
+      <domain-event>.ts              ← Domain Event 정의 (내부용, 버저닝 없음)
     application/
       event/
-        <domain-event>-handler.ts    ← EventHandler (@HandleEvent 데코레이터)
+        <domain-event>-handler.ts    ← Domain EventHandler (@HandleEvent)
+      integration-event/
+        <name>-integration-event.ts  ← Integration Event 정의 (외부 공개 계약, V1 등 버전)
+    interface/
+      integration-event/
+        <domain>-integration-event-controller.ts  ← 외부 BC Integration Event 수신 (@HandleIntegrationEvent)
 ```
 
 ### Module 등록
@@ -429,10 +459,99 @@ public async handle(event: { orderId: string }): Promise<void> {
 
 `processed: true`인 이벤트는 일정 기간 후 삭제한다 (OutboxRelay의 cleanup 메서드, 기본 7일).
 
+### Integration Event 정의 — 외부 BC용 공개 계약
+
+Integration Event는 **application/integration-event/**에 정의한다. Domain Event와 분리된 공개 계약이므로 이름에 **버전 접미사(V1 등)**을 붙이고 스키마는 의도적으로 평탄하게 설계한다 (내부 Aggregate 구조 노출 금지).
+
+```typescript
+// order/application/integration-event/order-cancelled-integration-event.ts
+export class OrderCancelledIntegrationEventV1 {
+  public readonly eventName = 'order.cancelled.v1' as const
+  constructor(
+    public readonly orderId: string,
+    public readonly cancelledAt: string,
+    public readonly reason: string
+  ) {}
+}
+```
+
+파일·클래스 네이밍:
+- 파일: `<name>-integration-event.ts` (application/integration-event/)
+- 클래스: `<Name>IntegrationEventV1`, 스키마 변경 시 `V2` 추가 (V1은 호환 유지 기간 동안 함께 발행)
+- eventName 리터럴: `<domain>.<verb-past>.v<N>` — SQS 메시지 eventType으로 사용
+
+### Integration Event 발행 — Application EventHandler
+
+같은 BC의 Domain Event를 수신한 EventHandler가 외부 BC에 알릴 필요가 있을 때 Integration Event를 구성하여 Outbox에 적재한다. **EventHandler는 Application 레이어에서 OutboxWriter를 직접 사용할 수 있는 유일한 예외**이다 (Command Service는 여전히 금지).
+
+```typescript
+// order/application/event/order-cancelled-handler.ts
+import { Injectable, Logger } from '@nestjs/common'
+
+import { HandleEvent } from '@/outbox/event-handler-registry'
+import { OutboxWriter } from '@/outbox/outbox-writer'
+import { OrderCancelledIntegrationEventV1 } from '@/order/application/integration-event/order-cancelled-integration-event'
+
+@Injectable()
+export class OrderCancelledHandler {
+  private readonly logger = new Logger(OrderCancelledHandler.name)
+
+  constructor(private readonly outboxWriter: OutboxWriter) {}
+
+  @HandleEvent('OrderCancelled')
+  public async handle(event: { orderId: string; reason: string; cancelledAt: string }): Promise<void> {
+    this.logger.log({ message: '주문 취소 Domain Event 수신', order_id: event.orderId })
+    // 같은 BC 내 후속 처리가 있다면 여기서 수행 (Command Service 호출 등)
+
+    // 외부 BC에 알리는 경우 Integration Event로 변환하여 발행
+    await this.outboxWriter.saveAll([
+      new OrderCancelledIntegrationEventV1(event.orderId, event.cancelledAt, event.reason)
+    ])
+  }
+}
+```
+
+> Domain Event 자체를 그대로 외부에 전달하지 않는다. 내부 스키마 변경이 외부 consumer를 깨뜨린다. EventHandler가 변환 지점이다.
+
+### Integration Event 수신 — Interface Integration Event Controller
+
+외부 BC가 발행한 Integration Event가 자기 BC에 도착하면 **Interface 레이어의 Integration Event Controller**에서 받는다. HTTP Controller · Task Controller와 같은 입력 어댑터로 취급한다.
+
+```typescript
+// payment/interface/integration-event/payment-integration-event-controller.ts
+import { Injectable, Logger } from '@nestjs/common'
+
+import { HandleIntegrationEvent } from '@/outbox/event-handler-registry'
+import { PaymentCommandService } from '@/payment/application/command/payment-command-service'
+
+@Injectable()
+export class PaymentIntegrationEventController {
+  private readonly logger = new Logger(PaymentIntegrationEventController.name)
+
+  constructor(private readonly paymentCommandService: PaymentCommandService) {}
+
+  @HandleIntegrationEvent('order.cancelled.v1')
+  public async onOrderCancelled(event: { orderId: string; cancelledAt: string; reason: string }): Promise<void> {
+    this.logger.log({ message: 'order.cancelled.v1 수신', order_id: event.orderId })
+    await this.paymentCommandService.refundForCancelledOrder({ orderId: event.orderId, reason: event.reason })
+  }
+}
+```
+
+파일·클래스 네이밍:
+- 파일: `<domain>-integration-event-controller.ts` (interface/integration-event/)
+- 클래스: `<Domain>IntegrationEventController`
+- 데코레이터: `@HandleIntegrationEvent('<event-name>.v<N>')` — Domain Event용 `@HandleEvent`와 구분
+
+Task Controller와 동일하게 예외는 그대로 throw하여 EventConsumer / Relay가 재시도 · DLQ 처리를 담당한다. Controller에서 `generateErrorResponse`를 쓰지 않는다.
+
 ### 원칙
 
-- **이벤트는 Aggregate 내부에서만 생성한다**: 도메인 메서드가 이벤트 객체를 `_events`에 추가한다.
+- **Domain Event는 Aggregate 내부에서만 생성한다**: 도메인 메서드가 이벤트 객체를 `_events`에 추가한다.
+- **Integration Event는 Aggregate가 직접 만들지 않는다**: Application EventHandler가 Domain Event를 변환하여 Outbox에 적재한다.
 - **Repository.save()에서 Aggregate + Outbox를 함께 저장한다**: Command Service는 outbox를 직접 다루지 않는다.
-- **Outbox → SQS → EventHandler 순서로 전달한다**: 이벤트 발행의 각 단계가 독립적이다.
-- **EventHandler는 멱등하게 구현한다**: SQS at-least-once 전달 특성에 대비한다.
-- **EventHandler는 application/event/에 배치한다**: `@HandleEvent` 데코레이터로 eventType을 지정한다.
+- **Outbox → SQS → Handler 순서로 전달한다**: 이벤트 발행의 각 단계가 독립적이다.
+- **Handler는 멱등하게 구현한다**: SQS at-least-once 전달 특성에 대비한다.
+- **Domain Event Handler는 application/event/에 배치한다**: `@HandleEvent` 데코레이터로 eventType을 지정한다.
+- **Integration Event Controller는 interface/integration-event/에 배치한다**: `@HandleIntegrationEvent`로 버전이 포함된 이벤트명을 지정하고, Command Service를 호출해 자기 BC의 유스케이스만 실행한다.
+- **Integration Event는 버저닝한다**: `V1`/`order.cancelled.v1` 식으로 공개 계약을 명시하고 호환 유지 기간 동안 구·신 버전을 함께 발행한다.
