@@ -18,6 +18,7 @@ import { evaluateTaskQueue } from '../evaluators/rules/task-queue.evaluator'
 import { evaluateScheduler } from '../evaluators/rules/scheduler.evaluator'
 import { evaluateDeprecatedApi } from '../evaluators/rules/deprecated-api.evaluator'
 import { evaluateDomainEventOutbox } from '../evaluators/rules/domain-event-outbox.evaluator'
+import { evaluateErrorHandling } from '../evaluators/rules/error-handling.evaluator'
 import type { EvaluatorResult } from '../evaluators/shared/types'
 
 type EvaluatorFn = (root: string) => EvaluatorResult
@@ -26,7 +27,8 @@ const EVALUATORS: Record<string, EvaluatorFn> = {
   'task-queue': evaluateTaskQueue,
   scheduler: evaluateScheduler,
   'deprecated-api': evaluateDeprecatedApi,
-  'domain-event-outbox': evaluateDomainEventOutbox
+  'domain-event-outbox': evaluateDomainEventOutbox,
+  'error-handling': evaluateErrorHandling
 }
 
 interface Expected {

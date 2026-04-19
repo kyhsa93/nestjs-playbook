@@ -70,7 +70,7 @@ npm run evaluate -- /path/to/project --out=report.json
 | `controller-path` | `@Controller('create…')` 같은 동사 prefix 금지 | 25 |
 | `checklist` | `docs/checklist.md` 기반 기계 룰 모음 | 100 |
 | `cqrs-pattern` | `command/`·`query/` 분리, Query에서 Repository 미사용 | 25 |
-| `error-handling` | Domain에 HttpException 금지, Application에 throw new Error() 금지 | 25 |
+| `error-handling` | Domain HttpException 금지, Application throw new Error 금지, `<domain>-error-code.ts` 존재/네이밍/메시지 1:1, `generateErrorResponse` 3-튜플 | 25 |
 | `test-presence` | `test/` 또는 `*.spec.ts` 존재 | 25 |
 | `dto-validation` | DTO에 `class-validator` 데코레이터 부착 | 25 |
 | `task-queue` | `@TaskConsumer` 사용 시 Interface 레이어, CommandService 주입 등 | 20 *(auto-gated)* |

@@ -1,0 +1,7 @@
+{
+  "name": "error-handling",
+  "applicable": true,
+  "expectedFailureRuleIds": [
+    "error-handling.error-code.file-missing"
+  ]
+}
