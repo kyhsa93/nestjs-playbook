@@ -3,6 +3,23 @@
 `docs/`의 가이드 규칙 중 **기계 검증 가능한 항목**을 외부 NestJS 프로젝트에 적용하는 정적 분석 도구.
 각 evaluator는 TypeScript AST·파일 경로·정규식을 조합해 규칙 위반을 검출한다.
 
+## Coverage
+
+하네스가 어떤 가이드 규칙을 자동 검증하는지는 [`COVERAGE.md`](./COVERAGE.md)를 참고한다.
+
+가이드 규칙은 다음 세 가지로 구분된다.
+
+- **Auto-check**: evaluator로 자동 검증
+- **Manual**: 코드 리뷰/설계 리뷰로 확인
+- **Gap**: 아직 하네스에 구현되지 않은 검증 항목
+
+새 규칙을 가이드에 추가하거나 수정할 때는 다음 중 하나를 반드시 수행한다.
+
+1. evaluator 추가 또는 기존 evaluator 확장
+2. `COVERAGE.md`에 Manual 또는 Gap으로 명시
+
+이 과정을 통해 가이드와 하네스의 동기화를 유지한다.
+
 ## 구조
 
 ```
