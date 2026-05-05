@@ -1,7 +1,4 @@
-// Harness CLI — nestjs-playbook 가이드 규칙을 대상 NestJS 프로젝트에 적용하는 linter.
-
-import * as fs from 'node:fs'
-import * as path from 'node:path'
+// Harness CLI
 
 import { evaluateLayerDependency } from '../rules/layer-dependency.evaluator'
 import { evaluateRepositoryPattern } from '../rules/repository-pattern.evaluator'
@@ -24,10 +21,9 @@ import { evaluateSecretManager } from '../rules/secret-manager.evaluator'
 import { evaluateConfigValidation } from '../rules/config-validation.evaluator'
 import { evaluateLogging } from '../rules/logging.evaluator'
 import { evaluateAuth } from '../rules/auth.evaluator'
-import { aggregate } from '../shared/score'
-import type { EvaluatorResult } from '../shared/types'
+import { evaluateBootstrapHealthcheck } from '../rules/bootstrap-healthcheck.evaluator'
 
-const EVALUATORS: Record<string, (root: string) => EvaluatorResult> = {
+const EVALUATORS = {
   structure: evaluateStructure,
   'layer-dependency': evaluateLayerDependency,
   'repository-pattern': evaluateRepositoryPattern,
@@ -48,7 +44,6 @@ const EVALUATORS: Record<string, (root: string) => EvaluatorResult> = {
   'secret-manager': evaluateSecretManager,
   'config-validation': evaluateConfigValidation,
   logging: evaluateLogging,
-  auth: evaluateAuth
+  auth: evaluateAuth,
+  'bootstrap-healthcheck': evaluateBootstrapHealthcheck
 }
-
-// 이하 동일
