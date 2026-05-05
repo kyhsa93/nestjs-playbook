@@ -24,6 +24,7 @@ import { evaluateSecretManager } from '../rules/secret-manager.evaluator'
 import { evaluateConfigValidation } from '../rules/config-validation.evaluator'
 import { evaluateLogging } from '../rules/logging.evaluator'
 import { evaluateAuth } from '../rules/auth.evaluator'
+import { evaluateBootstrapHealthcheck } from '../rules/bootstrap-healthcheck.evaluator'
 import { aggregate } from '../shared/score'
 import type { EvaluatorResult } from '../shared/types'
 
@@ -48,7 +49,6 @@ const EVALUATORS: Record<string, (root: string) => EvaluatorResult> = {
   'secret-manager': evaluateSecretManager,
   'config-validation': evaluateConfigValidation,
   logging: evaluateLogging,
-  auth: evaluateAuth
+  auth: evaluateAuth,
+  'bootstrap-healthcheck': evaluateBootstrapHealthcheck
 }
-
-// 이하 동일
