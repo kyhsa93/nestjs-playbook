@@ -6,7 +6,8 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "evaluate": "tsx evaluators/cli/run.ts",
-    "test:evaluators": "tsx tests/run-fixtures.ts"
+    "test:evaluators": "tsx tests/run-fixtures.ts",
+    "test:meta": "tsx tests/run-meta.ts"
   },
   "dependencies": {
     "typescript": "^5.4.0"
