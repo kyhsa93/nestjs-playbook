@@ -22,6 +22,7 @@ import { evaluateBuild } from '../rules/build.evaluator'
 import { evaluateTestRun } from '../rules/test-run.evaluator'
 import { evaluateSecretManager } from '../rules/secret-manager.evaluator'
 import { evaluateConfigValidation } from '../rules/config-validation.evaluator'
+import { evaluateLogging } from '../rules/logging.evaluator'
 import { aggregate } from '../shared/score'
 import type { EvaluatorResult } from '../shared/types'
 
@@ -44,7 +45,8 @@ const EVALUATORS: Record<string, (root: string) => EvaluatorResult> = {
   build: evaluateBuild,
   'test-run': evaluateTestRun,
   'secret-manager': evaluateSecretManager,
-  'config-validation': evaluateConfigValidation
+  'config-validation': evaluateConfigValidation,
+  logging: evaluateLogging
 }
 
 // 이하 동일
