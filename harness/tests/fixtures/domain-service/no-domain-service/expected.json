@@ -1,0 +1,5 @@
+{
+  "name": "domain-service",
+  "applicable": false,
+  "expectedFailureRuleIds": []
+}

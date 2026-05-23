@@ -1,0 +1,8 @@
+{
+  "name": "aggregate-id",
+  "applicable": true,
+  "expectedFailureRuleIds": [
+    "aggregate-id.primary-generated-column-forbidden",
+    "aggregate-id.generate-id-missing"
+  ]
+}

@@ -23,6 +23,13 @@ import { evaluateLogging } from '../rules/logging.evaluator'
 import { evaluateAuth } from '../rules/auth.evaluator'
 import { evaluateBootstrapHealthcheck } from '../rules/bootstrap-healthcheck.evaluator'
 import { evaluateE2eQuality } from '../rules/e2e-quality.evaluator'
+import { evaluateDockerfile } from '../rules/dockerfile.evaluator'
+import { evaluateLocalDev } from '../rules/local-dev.evaluator'
+import { evaluateRateLimiting } from '../rules/rate-limiting.evaluator'
+import { evaluatePagination } from '../rules/pagination.evaluator'
+import { evaluateDatabaseQueries } from '../rules/database-queries.evaluator'
+import { evaluateDomainService } from '../rules/domain-service.evaluator'
+import { evaluateAggregateId } from '../rules/aggregate-id.evaluator'
 
 const EVALUATORS = {
   structure: evaluateStructure,
@@ -47,5 +54,12 @@ const EVALUATORS = {
   logging: evaluateLogging,
   auth: evaluateAuth,
   'bootstrap-healthcheck': evaluateBootstrapHealthcheck,
-  'e2e-quality': evaluateE2eQuality
+  'e2e-quality': evaluateE2eQuality,
+  dockerfile: evaluateDockerfile,
+  'local-dev': evaluateLocalDev,
+  'rate-limiting': evaluateRateLimiting,
+  pagination: evaluatePagination,
+  'database-queries': evaluateDatabaseQueries,
+  'domain-service': evaluateDomainService,
+  'aggregate-id': evaluateAggregateId
 }

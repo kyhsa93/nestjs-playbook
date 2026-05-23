@@ -1,0 +1,8 @@
+{
+  "name": "pagination",
+  "applicable": true,
+  "expectedFailureRuleIds": [
+    "pagination.page-decorator-missing",
+    "pagination.take-decorator-missing"
+  ]
+}

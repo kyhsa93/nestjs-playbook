@@ -100,6 +100,13 @@ npm run evaluate -- /path/to/project --out=report.json
 | `test-run` | `npm test` 실행 (`HARNESS_ENABLE_TEST_RUN=1`) | 20 *(opt-in)* |
 | `secret-manager` | `src/config/*.config.ts`에서 민감 키(`*_PASSWORD` · `*_SECRET` · `*_API_KEY` · `*_TOKEN`)를 `process.env`로만 받으면 실패. `NODE_ENV` 분기 · `SecretsManagerClient` · `SecretService` 중 하나 필요 | 10 *(auto-gated)* |
 | `e2e-quality` | `test/*.e2e-spec.ts` 존재 시: `jest.mock()` 사용 금지(high, -4/건), nock·testcontainers 패키지 미보유 시 경고(medium, -2) | 20 *(auto-gated)* |
+| `dockerfile` | `Dockerfile` 존재 시: 멀티스테이지(AS build) 필수, `CMD ["node", ...]` 직접 실행, `npm ci --omit=dev`, `.dockerignore` 존재 | 15 *(auto-gated)* |
+| `local-dev` | `docker-compose.yml` 존재 시: postgres 서비스, healthcheck, env 파일 존재 | 15 *(auto-gated)* |
+| `rate-limiting` | `@nestjs/throttler` 사용 시: `ThrottlerModule.forRoot/Async`, `APP_GUARD + ThrottlerGuard` 전역 등록 | 10 *(auto-gated)* |
+| `pagination` | pagination DTO(page+take 필드) 존재 시: `@Type(() => Number)` + `@IsInt()` 데코레이터, 범용 응답 키(data/items/result) 금지 | 15 *(auto-gated)* |
+| `database-queries` | `*.entity.ts` 존재 시: `@PrimaryGeneratedColumn()` 금지, `BaseEntity` 상속, `TransactionManager` 파일 존재 | 20 *(auto-gated)* |
+| `domain-service` | `src/<domain>/domain/*-service.ts` 존재 시: `@Injectable()` 및 NestJS 라우팅 데코레이터 금지 | 10 *(auto-gated)* |
+| `aggregate-id` | `*.entity.ts` 존재 시: `@PrimaryGeneratedColumn()` 금지, `@PrimaryColumn({ type: 'char', length: 32 })` 필수, `generateId()` 함수 존재 | 15 *(auto-gated)* |
 
 *auto-gated*: 해당 기능을 사용하는 코드가 없으면 `maxScore=0`으로 집계에서 제외.
 *opt-in*: 환경 변수 명시 시에만 실행.

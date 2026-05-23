@@ -1,0 +1,5 @@
+{
+  "name": "dockerfile",
+  "applicable": false,
+  "expectedFailureRuleIds": []
+}

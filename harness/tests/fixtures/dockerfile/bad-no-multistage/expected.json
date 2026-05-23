@@ -1,0 +1,9 @@
+{
+  "name": "dockerfile",
+  "applicable": true,
+  "expectedFailureRuleIds": [
+    "dockerfile.multistage-required",
+    "dockerfile.cmd-node-direct",
+    "dockerfile.prod-deps-only"
+  ]
+}

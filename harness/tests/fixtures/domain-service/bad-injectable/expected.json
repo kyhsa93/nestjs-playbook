@@ -1,0 +1,5 @@
+{
+  "name": "domain-service",
+  "applicable": true,
+  "expectedFailureRuleIds": ["domain-service.injectable-forbidden"]
+}

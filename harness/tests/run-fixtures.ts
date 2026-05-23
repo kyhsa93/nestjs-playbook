@@ -21,6 +21,13 @@ import { evaluateDomainEventOutbox } from '../evaluators/rules/domain-event-outb
 import { evaluateErrorHandling } from '../evaluators/rules/error-handling.evaluator'
 import { evaluateSecretManager } from '../evaluators/rules/secret-manager.evaluator'
 import { evaluateE2eQuality } from '../evaluators/rules/e2e-quality.evaluator'
+import { evaluateDockerfile } from '../evaluators/rules/dockerfile.evaluator'
+import { evaluateLocalDev } from '../evaluators/rules/local-dev.evaluator'
+import { evaluateRateLimiting } from '../evaluators/rules/rate-limiting.evaluator'
+import { evaluatePagination } from '../evaluators/rules/pagination.evaluator'
+import { evaluateDatabaseQueries } from '../evaluators/rules/database-queries.evaluator'
+import { evaluateDomainService } from '../evaluators/rules/domain-service.evaluator'
+import { evaluateAggregateId } from '../evaluators/rules/aggregate-id.evaluator'
 import type { EvaluatorResult } from '../evaluators/shared/types'
 
 type EvaluatorFn = (root: string) => EvaluatorResult
@@ -32,7 +39,14 @@ const EVALUATORS: Record<string, EvaluatorFn> = {
   'domain-event-outbox': evaluateDomainEventOutbox,
   'error-handling': evaluateErrorHandling,
   'secret-manager': evaluateSecretManager,
-  'e2e-quality': evaluateE2eQuality
+  'e2e-quality': evaluateE2eQuality,
+  dockerfile: evaluateDockerfile,
+  'local-dev': evaluateLocalDev,
+  'rate-limiting': evaluateRateLimiting,
+  pagination: evaluatePagination,
+  'database-queries': evaluateDatabaseQueries,
+  'domain-service': evaluateDomainService,
+  'aggregate-id': evaluateAggregateId
 }
 
 interface Expected {

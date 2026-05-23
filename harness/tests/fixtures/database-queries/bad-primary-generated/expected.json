@@ -1,0 +1,9 @@
+{
+  "name": "database-queries",
+  "applicable": true,
+  "expectedFailureRuleIds": [
+    "database-queries.primary-generated-column",
+    "database-queries.base-entity-missing",
+    "database-queries.transaction-manager-missing"
+  ]
+}

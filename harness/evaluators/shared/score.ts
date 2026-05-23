@@ -61,10 +61,11 @@ export function aggregate(results: EvaluatorResult[]): AggregateReport {
         || r.name.includes('import-graph')
         || r.name.includes('domain-event-outbox')
       ) return 'architecture'
-      if (r.name === 'build' || r.name === 'test-run' || r.name === 'secret-manager') return 'runtime'
-      if (r.name.includes('test')) return 'testing'
-      if (r.name.includes('controller') || r.name.includes('deprecated-api')) return 'api'
+      if (r.name === 'build' || r.name === 'test-run' || r.name === 'secret-manager' || r.name === 'dockerfile' || r.name === 'local-dev') return 'runtime'
+      if (r.name.includes('test') || r.name === 'e2e-quality') return 'testing'
+      if (r.name.includes('controller') || r.name.includes('deprecated-api') || r.name === 'pagination' || r.name === 'rate-limiting') return 'api'
       if (r.name.includes('dto')) return 'semantics'
+      if (r.name === 'database-queries' || r.name === 'domain-service' || r.name === 'aggregate-id') return 'architecture'
       return null
     })()
 

@@ -1,0 +1,8 @@
+{
+  "name": "local-dev",
+  "applicable": true,
+  "expectedFailureRuleIds": [
+    "local-dev.healthcheck-missing",
+    "local-dev.env-file-missing"
+  ]
+}

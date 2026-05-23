@@ -1,0 +1,5 @@
+{
+  "name": "rate-limiting",
+  "applicable": true,
+  "expectedFailureRuleIds": ["rate-limiting.app-guard-missing"]
+}
