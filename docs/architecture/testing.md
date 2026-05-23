@@ -202,7 +202,64 @@ describe('OrderController (e2e)', () => {
 | 속도 | 빠름 | 느림 (컨테이너 기동) |
 | SQL 호환성 | PostgreSQL 전용 문법 사용 불가 | 운영 DB와 동일 |
 | 설정 복잡도 | 낮음 | Docker 필요 |
-| 권장 시점 | 기본 E2E 테스트 | PostgreSQL 전용 쿼리/마이그레이션 검증 |
+| 권장 시점 | PostgreSQL 전용 문법을 쓰지 않는 단순 경로 검증 | **권장 기본값**; 운영 DB와 동일한 환경 보장 |
+
+testcontainers를 기본으로 사용한다. PostgreSQL 전용 문법이 전혀 없고 빠른 피드백이 필요한 경우에만 SQLite를 선택한다.
+
+```typescript
+// test/test-database.ts — testcontainers 버전
+import { TypeOrmModule } from '@nestjs/typeorm'
+import { PostgreSqlContainer } from '@testcontainers/postgresql'
+
+let container: Awaited<ReturnType<typeof new PostgreSqlContainer().start>>
+
+export async function startTestDatabase() {
+  container = await new PostgreSqlContainer().start()
+  return TypeOrmModule.forRoot({
+    type: 'postgres',
+    url: container.getConnectionUri(),
+    entities: [__dirname + '/../src/**/*.entity.ts'],
+    synchronize: true
+  })
+}
+
+export async function stopTestDatabase() {
+  await container?.stop()
+}
+```
+
+### 외부 HTTP 모킹: nock
+
+E2E 테스트에서 외부 HTTP 호출(HttpModule, axios 등)은 `nock`으로 인터셉트한다. `jest.mock()`으로 모듈 전체를 교체하지 않는다. mock은 단위 테스트 전용이며, E2E 테스트에서는 실제 HTTP 스택을 통과시키고 네트워크 경계만 nock으로 가로챈다.
+
+```typescript
+// test/order.e2e-spec.ts
+import * as nock from 'nock'
+
+afterEach(() => nock.cleanAll())
+
+it('POST /orders — 결제 API 성공 시 주문 완료', async () => {
+  nock('https://payment.internal')
+    .post('/pay')
+    .reply(200, { success: true })
+
+  return request(app.getHttpServer())
+    .post('/orders')
+    .send({ itemId: 'item-1', quantity: 1 })
+    .expect(201)
+})
+
+it('POST /orders — 결제 API 실패 시 400 반환', async () => {
+  nock('https://payment.internal')
+    .post('/pay')
+    .reply(402, { error: 'insufficient_funds' })
+
+  return request(app.getHttpServer())
+    .post('/orders')
+    .send({ itemId: 'item-1', quantity: 1 })
+    .expect(400)
+})
+```
 
 ## Jest 설정
 
@@ -249,7 +306,9 @@ it('getOrder_when_존재하지_않는_주문_then_404_반환')
 
 - **Domain 테스트는 프레임워크 없이 작성**: `new Aggregate()`로 직접 생성하여 테스트한다. NestJS Test 모듈을 사용하지 않는다.
 - **Application 테스트는 mock으로 격리**: Repository, Adapter를 mock으로 대체하여 Service 로직만 검증한다.
-- **E2E 테스트는 SQLite in-memory 기본**: 운영 DB와의 SQL 차이가 문제되면 testcontainers를 사용한다.
+- **E2E 테스트는 testcontainers 기본**: 운영 DB와 동일한 환경을 보장한다. PostgreSQL 전용 문법이 없고 속도가 중요한 경우에만 SQLite in-memory를 사용한다.
+- **E2E 테스트에서 mock 최소화**: `jest.mock()`으로 모듈을 교체하지 않는다. 외부 HTTP는 nock, DB는 testcontainers로 실제 의존성을 대체한다. mock은 단위 테스트 레이어 전용이다.
+- **외부 HTTP는 nock으로 인터셉트**: E2E 테스트에서 외부 서비스 호출은 nock으로 네트워크 경계를 가로챈다.
 - **운영 DB에 직접 연결 금지**: 테스트 환경은 항상 격리된 DB를 사용한다.
 - **테스트 간 데이터 간섭 없음**: 각 테스트 스위트는 독립된 DB 상태에서 실행한다.
 - **Aggregate 불변식 테스트 필수**: 모든 비즈니스 규칙에 대해 위반 시 예외 발생을 검증한다.

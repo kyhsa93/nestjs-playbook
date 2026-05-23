@@ -99,6 +99,7 @@ npm run evaluate -- /path/to/project --out=report.json
 | `build` | `tsc --noEmit` 실행 (tsconfig 존재 시) | 25 *(auto-gated)* |
 | `test-run` | `npm test` 실행 (`HARNESS_ENABLE_TEST_RUN=1`) | 20 *(opt-in)* |
 | `secret-manager` | `src/config/*.config.ts`에서 민감 키(`*_PASSWORD` · `*_SECRET` · `*_API_KEY` · `*_TOKEN`)를 `process.env`로만 받으면 실패. `NODE_ENV` 분기 · `SecretsManagerClient` · `SecretService` 중 하나 필요 | 10 *(auto-gated)* |
+| `e2e-quality` | `test/*.e2e-spec.ts` 존재 시: `jest.mock()` 사용 금지(high, -4/건), nock·testcontainers 패키지 미보유 시 경고(medium, -2) | 20 *(auto-gated)* |
 
 *auto-gated*: 해당 기능을 사용하는 코드가 없으면 `maxScore=0`으로 집계에서 제외.
 *opt-in*: 환경 변수 명시 시에만 실행.

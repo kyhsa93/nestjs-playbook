@@ -1,0 +1,5 @@
+{
+  "name": "e2e-quality",
+  "applicable": false,
+  "expectedFailureRuleIds": []
+}

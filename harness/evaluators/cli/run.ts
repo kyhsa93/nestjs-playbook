@@ -22,6 +22,7 @@ import { evaluateConfigValidation } from '../rules/config-validation.evaluator'
 import { evaluateLogging } from '../rules/logging.evaluator'
 import { evaluateAuth } from '../rules/auth.evaluator'
 import { evaluateBootstrapHealthcheck } from '../rules/bootstrap-healthcheck.evaluator'
+import { evaluateE2eQuality } from '../rules/e2e-quality.evaluator'
 
 const EVALUATORS = {
   structure: evaluateStructure,
@@ -45,5 +46,6 @@ const EVALUATORS = {
   'config-validation': evaluateConfigValidation,
   logging: evaluateLogging,
   auth: evaluateAuth,
-  'bootstrap-healthcheck': evaluateBootstrapHealthcheck
+  'bootstrap-healthcheck': evaluateBootstrapHealthcheck,
+  'e2e-quality': evaluateE2eQuality
 }

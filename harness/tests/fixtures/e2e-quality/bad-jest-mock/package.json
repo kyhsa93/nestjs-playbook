@@ -1,0 +1,6 @@
+{
+  "name": "bad-jest-mock-e2e",
+  "devDependencies": {
+    "nock": "^13.0.0"
+  }
+}

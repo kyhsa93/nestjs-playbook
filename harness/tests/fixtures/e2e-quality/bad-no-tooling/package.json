@@ -1,0 +1,6 @@
+{
+  "name": "bad-no-tooling-e2e",
+  "devDependencies": {
+    "supertest": "^6.0.0"
+  }
+}

@@ -32,7 +32,7 @@
 | `middleware-interceptor.md` | Middleware/Guard/Interceptor/Pipe 위치와 적용 | ❌ | - | Gap | `auth`, `bootstrap`, `middleware` evaluator 후보 |
 | `pagination.md` | Pagination DTO, 공통 응답 포맷, limit 제한 | ❌ | - | Gap | `pagination-response` evaluator 후보 |
 | `rate-limiting.md` | Rate limit guard/interceptor/module 설정 | ❌ | - | Gap | `rate-limiting` evaluator 후보 |
-| `testing.md` | 테스트 존재, 테스트 실행 | ✅ | `test-presence`, `test-run` | Partial | 테스트 품질/계층별 테스트 패턴은 Manual 리뷰 병행 |
+| `testing.md` | 테스트 존재, 테스트 실행, E2E mock 최소화, nock/testcontainers 사용 | ✅ | `test-presence`, `test-run`, `e2e-quality` | Partial | 계층별 테스트 패턴·testcontainers 설정 품질은 Manual 리뷰 병행 |
 | `logging.md` | Logger 사용, console 금지, observability | ❌ | - | Gap | `logging` evaluator 후보 |
 | `config.md` | 환경 변수 validation, ConfigModule 설정, process.env 직접 참조 제한 | ⚠️ | `secret-manager` | Partial | `config-validation` evaluator 후보 |
 | `secret-manager.md` | 민감 값 직접 env 사용 방지, SecretService/SecretsManager 사용 | ✅ | `secret-manager` | Partial | secret 사용 경로 fixture 확장 필요 |
@@ -72,6 +72,7 @@
 | `domain-event-outbox` | `domain-events.md` | Outbox/event handler 규칙 검증 |
 | `build` | 전체 TypeScript 프로젝트 | `tsc --noEmit` 실행 |
 | `test-run` | `testing.md` | opt-in 테스트 실행 |
+| `e2e-quality` | `testing.md` | E2E jest.mock() 금지, nock/testcontainers 사용 검증 |
 | `secret-manager` | `secret-manager.md`, `config.md` | 민감 env 직접 사용 방지 |
 
 ## Guide-Harness sync policy

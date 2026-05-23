@@ -1,0 +1,5 @@
+{
+  "name": "e2e-quality",
+  "applicable": true,
+  "expectedFailureRuleIds": ["e2e.jest-mock-in-e2e"]
+}
