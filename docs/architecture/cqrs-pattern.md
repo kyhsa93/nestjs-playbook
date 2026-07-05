@@ -136,26 +136,14 @@ import { IQueryHandler, QueryHandler } from '@nestjs/cqrs'
 
 import { GetOrdersQuery } from '@/order/application/query/get-orders-query'
 import { GetOrdersResult } from '@/order/application/query/get-orders-result'
-import { OrderRepository } from '@/order/domain/order-repository'
+import { OrderQuery } from '@/order/application/query/order-query'
 
 @QueryHandler(GetOrdersQuery)
 export class GetOrdersQueryHandler implements IQueryHandler<GetOrdersQuery> {
-  constructor(private readonly orderRepository: OrderRepository) {}
+  constructor(private readonly orderQuery: OrderQuery) {}
 
   public async execute(query: GetOrdersQuery): Promise<GetOrdersResult> {
-    const { orders, count } = await this.orderRepository.findOrders({
-      take: query.take,
-      page: query.page,
-      status: query.status
-    })
-    return {
-      orders: orders.map((o) => ({
-        orderId: o.orderId,
-        description: null,
-        status: o.status
-      })),
-      totalCount: count
-    }
+    return this.orderQuery.getOrders(query)
   }
 }
 ```
@@ -249,8 +237,10 @@ import { CreateOrderCommandHandler } from '@/order/application/command/create-or
 import { OrderCancelledHandler } from '@/order/application/event/order-cancelled-handler'
 import { GetOrderQueryHandler } from '@/order/application/query/get-order-query-handler'
 import { GetOrdersQueryHandler } from '@/order/application/query/get-orders-query-handler'
+import { OrderQuery } from '@/order/application/query/order-query'
 import { OrderRepository } from '@/order/domain/order-repository'
 import { PaymentRepository } from '@/order/domain/payment-repository'
+import { OrderQueryImpl } from '@/order/infrastructure/order-query-impl'
 import { OrderRepositoryImpl } from '@/order/infrastructure/order-repository-impl'
 import { PaymentRepositoryImpl } from '@/order/infrastructure/payment-repository-impl'
 import { OrderController } from '@/order/interface/order-controller'
@@ -269,7 +259,9 @@ import { OrderController } from '@/order/interface/order-controller'
     OrderCancelledHandler,
     // Repositories
     { provide: OrderRepository, useClass: OrderRepositoryImpl },
-    { provide: PaymentRepository, useClass: PaymentRepositoryImpl }
+    { provide: PaymentRepository, useClass: PaymentRepositoryImpl },
+    // Query 구현체
+    { provide: OrderQuery, useClass: OrderQueryImpl }
   ]
 })
 export class OrderModule {}
