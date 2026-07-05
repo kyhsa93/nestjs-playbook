@@ -32,7 +32,7 @@ src/
       query/
         order-query-service.ts         ← Query Service (읽기)
         order-query.ts                 ← Query 인터페이스 (abstract class)
-        get-order-param.ts
+        get-order-query.ts
         get-order-result.ts
         get-orders-query.ts
         get-orders-result.ts
@@ -682,14 +682,14 @@ export class OrderController {
 }
 ```
 
-### Param (Application 레이어)
+### Query (Application 레이어 — 단건 조회)
 
 ```typescript
-// application/query/get-order-param.ts
+// application/query/get-order-query.ts
 import { ApiProperty } from '@nestjs/swagger'
 import { IsString, MinLength } from 'class-validator'
 
-export class GetOrderParam {
+export class GetOrderQuery {
   @ApiProperty()
   @IsString()
   @MinLength(1)
@@ -738,8 +738,8 @@ import { GetOrdersResult } from '@/order/application/query/get-orders-result'
 export class GetOrdersResponseBody extends GetOrdersResult {}
 
 // interface/dto/get-order-request-param.ts
-import { GetOrderParam } from '@/order/application/query/get-order-param'
-export class GetOrderRequestParam extends GetOrderParam {}
+import { GetOrderQuery } from '@/order/application/query/get-order-query'
+export class GetOrderRequestParam extends GetOrderQuery {}
 
 // interface/dto/get-order-response-body.ts
 import { GetOrderResult } from '@/order/application/query/get-order-result'

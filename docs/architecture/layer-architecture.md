@@ -133,7 +133,7 @@ export class OrderCommandService {
 // application/query/order-query.ts — Query 인터페이스 (abstract class)
 export abstract class OrderQuery {
   abstract getOrders(query: GetOrdersQuery): Promise<GetOrdersResult>
-  abstract getOrder(param: GetOrderParam): Promise<GetOrderResult>
+  abstract getOrder(query: GetOrderQuery): Promise<GetOrderResult>
 }
 ```
 
@@ -333,9 +333,24 @@ export class OrderController {
 Interface DTO는 Application 레이어의 Query/Result/Command를 `extends`로 감싼다. 별도 로직이나 데코레이터를 추가하지 않는다.
 
 ```typescript
+// application/query/get-order-query.ts — 단건 조회 Query 객체
+import { ApiProperty } from '@nestjs/swagger'
+import { IsString, MinLength } from 'class-validator'
+
+export class GetOrderQuery {
+  @ApiProperty()
+  @IsString()
+  @MinLength(1)
+  public readonly orderId: string
+}
+
 // interface/dto/get-orders-request-querystring.ts
 import { GetOrdersQuery } from '@/order/application/query/get-orders-query'
 export class GetOrdersRequestQuerystring extends GetOrdersQuery {}
+
+// interface/dto/get-order-request-param.ts
+import { GetOrderQuery } from '@/order/application/query/get-order-query'
+export class GetOrderRequestParam extends GetOrderQuery {}
 
 // interface/dto/get-orders-response-body.ts
 import { GetOrdersResult } from '@/order/application/query/get-orders-result'
