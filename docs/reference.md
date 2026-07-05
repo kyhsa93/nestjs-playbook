@@ -593,6 +593,7 @@ import { GetOrderRequestParam } from '@/order/interface/dto/get-order-request-pa
 import { GetOrderResponseBody } from '@/order/interface/dto/get-order-response-body'
 import { GetOrdersRequestQuerystring } from '@/order/interface/dto/get-orders-request-querystring'
 import { GetOrdersResponseBody } from '@/order/interface/dto/get-orders-response-body'
+import { OrderErrorCode as ErrorCode } from '@/order/order-error-code'
 import { OrderErrorMessage } from '@/order/order-error-message'
 
 @Controller()
@@ -629,7 +630,7 @@ export class OrderController {
     return this.orderQueryService.getOrder(param).catch((error) => {
       this.logger.error(error)
       throw generateErrorResponse(error.message, [
-        [OrderErrorMessage['주문을 찾을 수 없습니다.'], NotFoundException]
+        [OrderErrorMessage['주문을 찾을 수 없습니다.'], NotFoundException, ErrorCode.ORDER_NOT_FOUND]
       ])
     })
   }
@@ -657,9 +658,9 @@ export class OrderController {
     return this.orderCommandService.cancelOrder(new CancelOrderCommand({ ...body, orderId })).catch((error) => {
       this.logger.error(error)
       throw generateErrorResponse(error.message, [
-        [OrderErrorMessage['주문을 찾을 수 없습니다.'], NotFoundException],
-        [OrderErrorMessage['이미 취소된 주문입니다.'], BadRequestException],
-        [OrderErrorMessage['결제 완료된 주문은 취소할 수 없습니다.'], BadRequestException]
+        [OrderErrorMessage['주문을 찾을 수 없습니다.'], NotFoundException, ErrorCode.ORDER_NOT_FOUND],
+        [OrderErrorMessage['이미 취소된 주문입니다.'], BadRequestException, ErrorCode.ORDER_ALREADY_CANCELLED],
+        [OrderErrorMessage['결제 완료된 주문은 취소할 수 없습니다.'], BadRequestException, ErrorCode.ORDER_PAID_NOT_CANCELLABLE]
       ])
     })
   }
@@ -674,7 +675,7 @@ export class OrderController {
     return this.orderCommandService.deleteOrder(param).catch((error) => {
       this.logger.error(error)
       throw generateErrorResponse(error.message, [
-        [OrderErrorMessage['주문을 찾을 수 없습니다.'], NotFoundException]
+        [OrderErrorMessage['주문을 찾을 수 없습니다.'], NotFoundException, ErrorCode.ORDER_NOT_FOUND]
       ])
     })
   }

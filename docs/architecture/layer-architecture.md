@@ -133,7 +133,7 @@ export class OrderCommandService {
 // application/query/order-query.ts — Query 인터페이스 (abstract class)
 export abstract class OrderQuery {
   abstract getOrders(query: GetOrdersQuery): Promise<GetOrdersResult>
-  abstract getOrder(query: GetOrderQuery): Promise<GetOrderResult>
+  abstract getOrder(param: GetOrderParam): Promise<GetOrderResult>
 }
 ```
 
@@ -319,7 +319,7 @@ export class OrderController {
     return this.orderQueryService.getOrder(param).catch((error) => {
       this.logger.error(error)
       throw generateErrorResponse(error.message, [
-        [OrderErrorMessage['주문을 찾을 수 없습니다.'], NotFoundException]
+        [OrderErrorMessage['주문을 찾을 수 없습니다.'], NotFoundException, ErrorCode.ORDER_NOT_FOUND]
       ])
     })
   }
