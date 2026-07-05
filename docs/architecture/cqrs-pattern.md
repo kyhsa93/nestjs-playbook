@@ -148,6 +148,22 @@ export class GetOrdersQueryHandler implements IQueryHandler<GetOrdersQuery> {
 }
 ```
 
+### QueryHandler와 읽기 모델 (Read Model)
+
+QueryHandler는 **Domain 레이어의 `OrderRepository`를 사용하지 않는다.** Repository는 Aggregate 복원을 위한 쓰기 전용 인터페이스다. 대신 Application 레이어에 정의된 **`OrderQuery` 인터페이스(abstract class)** 를 주입받아 사용한다.
+
+```
+읽기 전용 인터페이스 (Read Model)
+  application/query/order-query.ts        ← OrderQuery (abstract class) — QueryHandler가 주입받는 인터페이스
+  infrastructure/order-query-impl.ts      ← OrderQueryImpl — DB 직접 조회, Aggregate 복원 불필요
+
+쓰기 전용 인터페이스
+  domain/order-repository.ts              ← OrderRepository (abstract class) — CommandHandler만 사용
+  infrastructure/order-repository-impl.ts ← OrderRepositoryImpl — Aggregate 복원 + Outbox 저장
+```
+
+`OrderQuery`와 `OrderQueryImpl`이 CQRS의 **읽기 모델(Read Model)** 역할을 한다. Service 방식의 `OrderQueryService`와 `@nestjs/cqrs`의 `GetOrdersQueryHandler`는 동일한 `OrderQuery` 인터페이스를 공유한다. 두 방식 중 어느 쪽을 선택하든 읽기/쓰기 분리 원칙은 동일하게 적용된다.
+
 ### EventHandler
 
 Domain Event에 반응하여 후속 처리를 수행한다. 하나의 Event에 여러 EventHandler를 등록할 수 있다.
@@ -275,7 +291,7 @@ export class OrderModule {}
 | Controller 의존성 | `OrderCommandService` + `OrderQueryService` 주입 | `CommandBus`, `QueryBus` 주입 |
 | 이벤트 처리 | Outbox + SQS + `@HandleEvent` 핸들러 | Outbox + SQS + `@HandleEvent` 핸들러 (동일) |
 | Module 등록 | `CommandService`, `QueryService`, `{ provide: Query, useClass: QueryImpl }` 등록 | 각 Handler를 개별 등록 |
-| 읽기/쓰기 분리 | Command Service / Query Service로 분리 | Command/Query Handler로 분리 |
+| 읽기/쓰기 분리 | Command Service(`OrderRepository`) / Query Service(`OrderQuery`) | CommandHandler(`OrderRepository`) / QueryHandler(`OrderQuery`) |
 
 ### 적용 기준
 
