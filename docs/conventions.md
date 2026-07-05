@@ -23,8 +23,7 @@
 - Repository 구현체: `<aggregate>-repository-impl.ts` (infrastructure 레이어)
 - DTO: 동사 우선, 서술적 — `get-orders-request-querystring.ts`, `create-order-request-body.ts`
 - 커맨드: `<verb>-<noun>-command.ts`
-- 쿼리: `<verb>-<noun>-query.ts` / 결과: `<verb>-<noun>-result.ts` (동사는 `get`, `find` 등 Controller 메서드명과 일치시킨다)
-- Param (읽기): `<verb>-<noun>-param.ts` — URL 파라미터를 받는 읽기용 객체. `query/`에 배치한다.
+- 쿼리 객체: `<verb>-<noun>-query.ts` / 결과: `<verb>-<noun>-result.ts` — querystring 기반(목록)이든 URL 파라미터 기반(단건)이든 읽기 요청 객체는 모두 `-query.ts`로 정의한다. `query/`에 배치한다. (동사는 `get`, `find` 등 Controller 메서드명과 일치시킨다)
 - Param (쓰기): URL 파라미터만 받는 쓰기 요청도 `<verb>-<noun>-command.ts`로 정의한다. `command/`에 배치한다.
 - Adapter 인터페이스: `<external-domain>-adapter.ts` (`application/adapter/`에 배치)
 - Adapter 구현체: `<external-domain>-adapter-impl.ts` (`infrastructure/`에 배치)
