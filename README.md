@@ -1,5 +1,8 @@
 # NestJS 개발 가이드
 
+> **Deprecated**: 이 레포는 더 이상 유지되지 않습니다.
+> NestJS 구현 가이드는 [backend-service-playbook/implementations/nestjs](https://github.com/kyhsa93/backend-service-playbook/tree/main/implementations/nestjs)로 이전되었습니다.
+
 DDD 기반 NestJS TypeScript 서버 프로젝트의 설계·구현 **참고 가이드**와 규칙을 자동 검증하는 **선택형 linter(harness)** 를 함께 제공한다.
 
 AI 에이전트(Claude Code, Codex 등)가 자기 NestJS 프로젝트를 작업할 때 이 저장소의 `docs/`를 참조하고, 완료 후 `harness/`로 규칙 준수를 검증할 수 있다.
